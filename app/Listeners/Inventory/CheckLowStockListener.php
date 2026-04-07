@@ -22,8 +22,10 @@ class CheckLowStockListener implements ShouldQueue
         }
 
         $stockLevel = $event->stockLevel;
-        $product = Product::find($stockLevel->product_id);
-        $warehouse = Warehouse::find($stockLevel->warehouse_id);
+        // withoutGlobalScopes() is required — this listener runs on the queue
+        // with no authenticated user, so tenant global scopes would return null.
+        $product = Product::withoutGlobalScopes()->find($stockLevel->product_id);
+        $warehouse = Warehouse::withoutGlobalScopes()->find($stockLevel->warehouse_id);
 
         if (!$product || !$warehouse) {
             return;

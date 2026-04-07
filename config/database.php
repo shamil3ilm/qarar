@@ -46,6 +46,14 @@ return [
         'mysql' => [
             'driver' => 'mysql',
             'url' => env('DB_URL'),
+            // Read/write split: set DB_READ_HOST to a replica; falls back to DB_HOST when unset.
+            'read' => [
+                'host' => [env('DB_READ_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'write' => [
+                'host' => [env('DB_WRITE_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'sticky' => true, // Ensure write is read back in the same request
             'host' => env('DB_HOST', '127.0.0.1'),
             'port' => env('DB_PORT', '3306'),
             'database' => env('DB_DATABASE', 'laravel'),
@@ -66,7 +74,14 @@ return [
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),
-            'host' => env('DB_HOST', '127.0.0.1'),
+            // Read/write split: set DB_READ_HOST to a replica; falls back to DB_HOST when unset.
+            'read' => [
+                'host' => [env('DB_READ_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'write' => [
+                'host' => [env('DB_WRITE_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'sticky' => true, // Ensure write is read back in the same request
             'port' => env('DB_PORT', '3306'),
             'database' => env('DB_DATABASE', 'laravel'),
             'username' => env('DB_USERNAME', 'root'),
@@ -86,7 +101,14 @@ return [
         'pgsql' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL'),
-            'host' => env('DB_HOST', '127.0.0.1'),
+            // Read/write split: set DB_READ_HOST to a replica; falls back to DB_HOST when unset.
+            'read' => [
+                'host' => [env('DB_READ_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'write' => [
+                'host' => [env('DB_WRITE_HOST', env('DB_HOST', '127.0.0.1'))],
+            ],
+            'sticky' => true, // Ensure write is read back in the same request
             'port' => env('DB_PORT', '5432'),
             'database' => env('DB_DATABASE', 'laravel'),
             'username' => env('DB_USERNAME', 'root'),

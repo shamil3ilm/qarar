@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Listeners\HR;
 
 use App\Events\HR\LeaveRequestSubmitted;
-use App\Models\Core\User;
+use App\Models\User;
 use App\Notifications\HR\LeaveRequestSubmittedNotification;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\Notification;
@@ -24,7 +24,7 @@ class NotifyLeaveApprover implements ShouldQueue
 
         // Add department head
         if ($employee->department?->head_id) {
-            $departmentHead = User::find($employee->department->head_id);
+            $departmentHead = User::withoutGlobalScopes()->find($employee->department->head_id);
             if ($departmentHead) {
                 $approvers->push($departmentHead);
             }
@@ -32,7 +32,7 @@ class NotifyLeaveApprover implements ShouldQueue
 
         // Add reporting manager if different
         if ($employee->reporting_manager_id && $employee->reporting_manager_id !== $employee->department?->head_id) {
-            $manager = User::find($employee->reporting_manager_id);
+            $manager = User::withoutGlobalScopes()->find($employee->reporting_manager_id);
             if ($manager) {
                 $approvers->push($manager);
             }
@@ -40,7 +40,7 @@ class NotifyLeaveApprover implements ShouldQueue
 
         // Add HR managers as fallback
         if ($approvers->isEmpty()) {
-            $hrManagers = User::whereHas('roles', function ($query) {
+            $hrManagers = User::withoutGlobalScopes()->whereHas('roles', function ($query) {
                 $query->whereIn('slug', ['hr-manager', 'admin']);
             })
                 ->where('organization_id', $employee->organization_id)

@@ -42,7 +42,6 @@ class ActivityResource extends JsonResource
             'attendees' => $this->attendees,
 
             // Assignment
-            'assigned_to' => $this->assigned_to,
             'assignee' => $this->whenLoaded('assignee', fn() => [
                 'id' => $this->assignee->id,
                 'name' => $this->assignee->name,
@@ -63,7 +62,6 @@ class ActivityResource extends JsonResource
             'notes' => $this->notes,
 
             // Metadata
-            'created_by' => $this->created_by,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

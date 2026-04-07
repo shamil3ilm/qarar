@@ -58,16 +58,6 @@ class PurchaseOrderLineResource extends JsonResource
             ]),
             'tax_rate' => (float) $this->tax_rate,
             'tax_amount' => (float) $this->tax_amount,
-            'tax_code' => $this->tax_code,
-
-            // GST split (India)
-            'cgst_rate' => (float) $this->cgst_rate,
-            'cgst_amount' => (float) $this->cgst_amount,
-            'sgst_rate' => (float) $this->sgst_rate,
-            'sgst_amount' => (float) $this->sgst_amount,
-            'igst_rate' => (float) $this->igst_rate,
-            'igst_amount' => (float) $this->igst_amount,
-            'hsn_code' => $this->hsn_code,
 
             // Totals
             'subtotal' => (float) $this->subtotal,

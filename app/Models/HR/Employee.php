@@ -4,19 +4,21 @@ declare(strict_types=1);
 
 namespace App\Models\HR;
 
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Employee extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasUuid, SoftDeletes;
 
     public const EMPLOYMENT_TYPE_FULL_TIME = 'full_time';
     public const EMPLOYMENT_TYPE_PART_TIME = 'part_time';
@@ -70,8 +72,6 @@ class Employee extends Model
         'shift_start',
         'shift_end',
         'work_days',
-        'national_id',
-        'passport_number',
         'passport_expiry',
         'visa_number',
         'visa_expiry',
@@ -83,12 +83,13 @@ class Employee extends Model
         'currency_code',
         'payment_mode',
         'bank_name',
-        'bank_account_number',
         'bank_ifsc_code',
-        'bank_iban',
         'notes',
         'profile_photo_path',
         'is_active',
+        'rehire_date',
+        'previous_termination_date',
+        'rehire_count',
     ];
 
     protected function casts(): array
@@ -97,7 +98,10 @@ class Employee extends Model
             'date_of_birth' => 'date',
             'joining_date' => 'date',
             'confirmation_date' => 'date',
-            'termination_date' => 'date',
+            'termination_date'          => 'date',
+        'rehire_date'               => 'date',
+        'previous_termination_date' => 'date',
+        'rehire_count'              => 'integer',
             'passport_expiry' => 'date',
             'visa_expiry' => 'date',
             'work_permit_expiry' => 'date',
@@ -106,6 +110,10 @@ class Employee extends Model
             'work_days' => 'array',
             'tax_declarations' => 'array',
             'is_active' => 'boolean',
+            'national_id' => 'encrypted',
+            'passport_number' => 'encrypted',
+            'bank_account_number' => 'encrypted',
+            'bank_iban' => 'encrypted',
         ];
     }
 
@@ -189,6 +197,26 @@ class Employee extends Model
         return $this->hasMany(EmployeeLoan::class);
     }
 
+    public function dependents(): HasMany
+    {
+        return $this->hasMany(EmployeeDependent::class);
+    }
+
+    public function transfers(): HasMany
+    {
+        return $this->hasMany(EmployeeTransfer::class);
+    }
+
+    public function trainingEnrollments(): HasMany
+    {
+        return $this->hasMany(TrainingEnrollment::class);
+    }
+
+    public function certifications(): HasMany
+    {
+        return $this->hasMany(TrainingCertification::class);
+    }
+
     public function getFullName(): string
     {
         return trim("{$this->first_name} {$this->middle_name} {$this->last_name}");
@@ -221,7 +249,7 @@ class Employee extends Model
         }
 
         $endDate = $this->termination_date ?? now();
-        return $this->joining_date->diffInMonths($endDate);
+        return (int) $this->joining_date->diffInMonths($endDate);
     }
 
     public function isOnProbation(): bool
@@ -294,6 +322,17 @@ class Employee extends Model
     {
         return $query->whereNull('confirmation_date')
             ->where('is_active', true);
+    }
+
+    /**
+     * Update sensitive PII fields that are not mass-assignable.
+     * These fields require explicit setter usage with audit trail.
+     */
+    public function updateSensitiveData(array $data): void
+    {
+        $allowed = ['national_id', 'passport_number', 'bank_account_number', 'bank_iban'];
+        $filtered = array_intersect_key($data, array_flip($allowed));
+        $this->update($filtered);
     }
 
     public function scopeExpiringDocuments($query, int $days = 30)

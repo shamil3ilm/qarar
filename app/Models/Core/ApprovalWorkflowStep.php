@@ -23,6 +23,9 @@ class ApprovalWorkflowStep extends Model
         'approver_type',
         'approver_id',
         'approver_custom',
+        'action_type',
+        'condition',
+        'conditions',
         'requires_all',
         'min_approvers',
         'timeout_hours',
@@ -31,12 +34,15 @@ class ApprovalWorkflowStep extends Model
     ];
 
     protected $casts = [
-        'sequence' => 'integer',
-        'requires_all' => 'boolean',
+        'sequence'      => 'integer',
+        'requires_all'  => 'boolean',
         'min_approvers' => 'integer',
         'timeout_hours' => 'integer',
-        'can_skip' => 'boolean',
-        'can_delegate' => 'boolean',
+        'can_skip'      => 'boolean',
+        'can_delegate'  => 'boolean',
+        'condition'     => 'array',
+        'conditions'    => 'array',
+        'approver_custom' => 'array',
     ];
 
     // Relationships

@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
+use App\Models\Concerns\HasStateMachine;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PayrollPeriod extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasStateMachine;
 
     public const STATUS_OPEN = 'open';
     public const STATUS_PROCESSING = 'processing';
@@ -122,5 +125,24 @@ class PayrollPeriod extends Model
     {
         return $query->where('start_date', '<=', $date)
             ->where('end_date', '>=', $date);
+    }
+
+    // -------------------------------------------------------------------------
+    // HasStateMachine implementation
+    // -------------------------------------------------------------------------
+
+    protected function getStateColumn(): string
+    {
+        return 'status';
+    }
+
+    protected function getStateTransitions(): array
+    {
+        return [
+            self::STATUS_OPEN       => [self::STATUS_PROCESSING],
+            self::STATUS_PROCESSING => [self::STATUS_PROCESSED],
+            self::STATUS_PROCESSED  => [self::STATUS_CLOSED],
+            self::STATUS_CLOSED     => [],
+        ];
     }
 }

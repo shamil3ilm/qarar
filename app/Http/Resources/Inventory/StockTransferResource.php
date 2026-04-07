@@ -14,6 +14,7 @@ class StockTransferResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'transfer_number' => $this->transfer_number,
             'transfer_date' => $this->transfer_date?->toDateString(),
             'expected_arrival_date' => $this->expected_arrival_date?->toDateString(),
@@ -39,7 +40,7 @@ class StockTransferResource extends JsonResource
                     'product_name' => $line->product?->name,
                     'product_sku' => $line->product?->sku,
                     'variant_id' => $line->variant_id,
-                    'variant_name' => $line->variant?->name,
+                    'variant_name' => $line->relationLoaded('variant') ? $line->variant?->name : null,
                     'quantity_sent' => $line->quantity_sent,
                     'quantity_received' => $line->quantity_received,
                     'unit_cost' => $line->unit_cost,

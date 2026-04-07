@@ -5,12 +5,48 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Core\Organization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LeaveBalance extends Model
 {
-    use BelongsToOrganization;
+    use HasFactory, BelongsToOrganization;
+
+    protected static function newFactory(): Factory
+    {
+        return new class extends Factory {
+            protected $model = \App\Models\HR\LeaveBalance::class;
+
+            public function definition(): array
+            {
+                $openingBalance = fake()->randomFloat(2, 10, 30);
+                $accrued = fake()->randomFloat(2, 0, 10);
+                $taken = fake()->randomFloat(2, 0, $openingBalance * 0.5);
+                $adjustment = 0;
+                $encashed = 0;
+                $lapsed = 0;
+                $closingBalance = round($openingBalance + $accrued + $adjustment - $taken - $encashed - $lapsed, 2);
+
+                return [
+                    'organization_id' => Organization::factory(),
+                    'employee_id' => Employee::factory(),
+                    'leave_type_id' => LeaveType::factory(),
+                    'year' => now()->year,
+                    'opening_balance' => $openingBalance,
+                    'accrued' => $accrued,
+                    'taken' => $taken,
+                    'adjustment' => $adjustment,
+                    'encashed' => $encashed,
+                    'lapsed' => $lapsed,
+                    'closing_balance' => max(0, $closingBalance),
+                    'notes' => null,
+                ];
+            }
+        };
+    }
 
     protected $fillable = [
         'organization_id',

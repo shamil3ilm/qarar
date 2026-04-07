@@ -4,17 +4,20 @@ declare(strict_types=1);
 
 namespace App\Models\Purchase;
 
-use App\Models\Accounting\ChartOfAccount;
+use App\Models\Accounting\Account;
 use App\Models\Inventory\Product;
 use App\Models\Inventory\ProductVariant;
 use App\Models\Inventory\UnitOfMeasure;
 use App\Models\Inventory\Warehouse;
 use App\Models\Tax\TaxCategory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BillLine extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'bill_id',
         'product_id',
@@ -70,6 +73,20 @@ class BillLine extends Model
         static::saving(function (BillLine $line) {
             $line->calculateTotals();
         });
+
+        static::saved(function (BillLine $line) {
+            $bill = $line->bill;
+            if ($bill && in_array($bill->status, [Bill::STATUS_DRAFT, Bill::STATUS_PENDING], true)) {
+                $bill->recalculateTotals();
+            }
+        });
+
+        static::deleted(function (BillLine $line) {
+            $bill = $line->bill;
+            if ($bill && in_array($bill->status, [Bill::STATUS_DRAFT, Bill::STATUS_PENDING], true)) {
+                $bill->recalculateTotals();
+            }
+        });
     }
 
     public function bill(): BelongsTo
@@ -99,7 +116,7 @@ class BillLine extends Model
 
     public function account(): BelongsTo
     {
-        return $this->belongsTo(ChartOfAccount::class, 'account_id');
+        return $this->belongsTo(Account::class, 'account_id');
     }
 
     public function warehouse(): BelongsTo

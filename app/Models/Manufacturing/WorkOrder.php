@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace App\Models\Manufacturing;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
+use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\Core\Branch;
-use App\Models\Core\User;
+use App\Models\User;
 use App\Models\Inventory\Product;
 use App\Models\Inventory\ProductVariant;
 use App\Models\Inventory\UnitOfMeasure;
 use App\Models\Inventory\Warehouse;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -19,14 +22,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class WorkOrder extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasStateMachine, HasUuid, SoftDeletes;
 
-    public const STATUS_DRAFT = 'draft';
-    public const STATUS_PENDING = 'pending';
-    public const STATUS_SCHEDULED = 'scheduled';
+    public const STATUS_DRAFT       = 'draft';
+    public const STATUS_RELEASED    = 'released';
     public const STATUS_IN_PROGRESS = 'in_progress';
-    public const STATUS_COMPLETED = 'completed';
-    public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_COMPLETED   = 'completed';
+    public const STATUS_CLOSED      = 'closed';
+    public const STATUS_CANCELLED   = 'cancelled';
 
     public const PRIORITY_LOW = 'low';
     public const PRIORITY_NORMAL = 'normal';
@@ -162,14 +165,9 @@ class WorkOrder extends Model
         return $query->where('status', self::STATUS_DRAFT);
     }
 
-    public function scopePending($query)
+    public function scopeReleased($query)
     {
-        return $query->where('status', self::STATUS_PENDING);
-    }
-
-    public function scopeScheduled($query)
-    {
-        return $query->where('status', self::STATUS_SCHEDULED);
+        return $query->where('status', self::STATUS_RELEASED);
     }
 
     public function scopeInProgress($query)
@@ -182,6 +180,11 @@ class WorkOrder extends Model
         return $query->where('status', self::STATUS_COMPLETED);
     }
 
+    public function scopeClosed($query)
+    {
+        return $query->where('status', self::STATUS_CLOSED);
+    }
+
     public function scopeCancelled($query)
     {
         return $query->where('status', self::STATUS_CANCELLED);
@@ -190,8 +193,7 @@ class WorkOrder extends Model
     public function scopeActive($query)
     {
         return $query->whereIn('status', [
-            self::STATUS_PENDING,
-            self::STATUS_SCHEDULED,
+            self::STATUS_RELEASED,
             self::STATUS_IN_PROGRESS,
         ]);
     }
@@ -229,14 +231,9 @@ class WorkOrder extends Model
         return $this->status === self::STATUS_DRAFT;
     }
 
-    public function isPending(): bool
+    public function isReleased(): bool
     {
-        return $this->status === self::STATUS_PENDING;
-    }
-
-    public function isScheduled(): bool
-    {
-        return $this->status === self::STATUS_SCHEDULED;
+        return $this->status === self::STATUS_RELEASED;
     }
 
     public function isInProgress(): bool
@@ -249,6 +246,11 @@ class WorkOrder extends Model
         return $this->status === self::STATUS_COMPLETED;
     }
 
+    public function isClosed(): bool
+    {
+        return $this->status === self::STATUS_CLOSED;
+    }
+
     public function isCancelled(): bool
     {
         return $this->status === self::STATUS_CANCELLED;
@@ -256,41 +258,30 @@ class WorkOrder extends Model
 
     public function isActive(): bool
     {
-        return in_array($this->status, [
-            self::STATUS_PENDING,
-            self::STATUS_SCHEDULED,
-            self::STATUS_IN_PROGRESS,
-        ]);
+        return in_array($this->status, [self::STATUS_RELEASED, self::STATUS_IN_PROGRESS], true);
     }
 
+    /** @deprecated Use canTransitionTo(self::STATUS_IN_PROGRESS) */
     public function canBeStarted(): bool
     {
-        return in_array($this->status, [
-            self::STATUS_PENDING,
-            self::STATUS_SCHEDULED,
-        ]);
+        return $this->canTransitionTo(self::STATUS_IN_PROGRESS);
     }
 
+    /** @deprecated Use canTransitionTo(self::STATUS_COMPLETED) */
     public function canBeCompleted(): bool
     {
-        return $this->status === self::STATUS_IN_PROGRESS;
+        return $this->canTransitionTo(self::STATUS_COMPLETED);
     }
 
+    /** @deprecated Use canTransitionTo(self::STATUS_CANCELLED) */
     public function canBeCancelled(): bool
     {
-        return in_array($this->status, [
-            self::STATUS_DRAFT,
-            self::STATUS_PENDING,
-            self::STATUS_SCHEDULED,
-        ]);
+        return $this->canTransitionTo(self::STATUS_CANCELLED);
     }
 
     public function canBeEdited(): bool
     {
-        return in_array($this->status, [
-            self::STATUS_DRAFT,
-            self::STATUS_PENDING,
-        ]);
+        return in_array($this->status, [self::STATUS_DRAFT, self::STATUS_RELEASED], true);
     }
 
     public function isOverdue(): bool
@@ -422,25 +413,31 @@ class WorkOrder extends Model
     }
 
     /**
-     * Start the work order.
+     * Start the work order (draft/released → in_progress).
      */
     public function start(): void
     {
-        $this->update([
-            'status' => self::STATUS_IN_PROGRESS,
+        $this->transitionTo(self::STATUS_IN_PROGRESS, [
             'actual_start_datetime' => now(),
         ]);
     }
 
     /**
-     * Complete the work order.
+     * Complete the work order (in_progress → completed).
      */
     public function complete(): void
     {
-        $this->update([
-            'status' => self::STATUS_COMPLETED,
+        $this->transitionTo(self::STATUS_COMPLETED, [
             'actual_end_datetime' => now(),
         ]);
+    }
+
+    /**
+     * Close the work order (completed → closed).
+     */
+    public function close(): void
+    {
+        $this->transitionTo(self::STATUS_CLOSED);
     }
 
     /**
@@ -448,8 +445,7 @@ class WorkOrder extends Model
      */
     public function cancel(string $reason): void
     {
-        $this->update([
-            'status' => self::STATUS_CANCELLED,
+        $this->transitionTo(self::STATUS_CANCELLED, [
             'cancellation_reason' => $reason,
         ]);
     }
@@ -460,5 +456,26 @@ class WorkOrder extends Model
     public function getDisplayName(): string
     {
         return $this->work_order_number;
+    }
+
+    // -------------------------------------------------------------------------
+    // HasStateMachine implementation
+    // -------------------------------------------------------------------------
+
+    protected function getStateColumn(): string
+    {
+        return 'status';
+    }
+
+    protected function getStateTransitions(): array
+    {
+        return [
+            self::STATUS_DRAFT       => [self::STATUS_RELEASED, self::STATUS_CANCELLED],
+            self::STATUS_RELEASED    => [self::STATUS_IN_PROGRESS, self::STATUS_CANCELLED],
+            self::STATUS_IN_PROGRESS => [self::STATUS_COMPLETED],
+            self::STATUS_COMPLETED   => [self::STATUS_CLOSED],
+            self::STATUS_CLOSED      => [],
+            self::STATUS_CANCELLED   => [],
+        ];
     }
 }

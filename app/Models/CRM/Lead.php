@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\Models\CRM;
 
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasUuid;
 use App\Models\Sales\Contact;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Lead extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasFactory, HasUuid, SoftDeletes;
 
     public const STATUS_NEW = 'new';
     public const STATUS_CONTACTED = 'contacted';
@@ -165,7 +166,7 @@ class Lead extends Model
 
     public function getAge(): int
     {
-        return $this->created_at->diffInDays(now());
+        return (int) $this->created_at->diffInDays(now());
     }
 
     public function scopeNew($query)

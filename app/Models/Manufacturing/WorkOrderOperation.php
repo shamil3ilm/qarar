@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Models\Manufacturing;
 
-use App\Models\Core\User;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class WorkOrderOperation extends Model
 {
+    use HasFactory;
     public const STATUS_PENDING = 'pending';
     public const STATUS_IN_PROGRESS = 'in_progress';
     public const STATUS_COMPLETED = 'completed';
@@ -29,14 +31,19 @@ class WorkOrderOperation extends Model
         'assigned_to',
         'completed_by',
         'notes',
+        'scheduled_start',
+        'scheduled_end',
+        'work_center_id',
     ];
 
     protected $casts = [
-        'sequence' => 'integer',
+        'sequence'          => 'integer',
         'estimated_minutes' => 'integer',
-        'actual_minutes' => 'integer',
-        'started_at' => 'datetime',
-        'completed_at' => 'datetime',
+        'actual_minutes'    => 'integer',
+        'started_at'        => 'datetime',
+        'completed_at'      => 'datetime',
+        'scheduled_start'   => 'datetime',
+        'scheduled_end'     => 'datetime',
     ];
 
     // Relationships
@@ -59,6 +66,11 @@ class WorkOrderOperation extends Model
     public function completedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'completed_by');
+    }
+
+    public function workCenter(): BelongsTo
+    {
+        return $this->belongsTo(WorkCenter::class);
     }
 
     // Scopes

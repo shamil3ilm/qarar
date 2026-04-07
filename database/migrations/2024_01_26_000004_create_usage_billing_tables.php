@@ -152,7 +152,7 @@ return new class extends Migration
             $table->json('breakdown')->nullable(); // Detailed breakdown by feature/endpoint
             $table->timestamps();
 
-            $table->unique(['organization_id', 'metric_type', 'period_type', 'period']);
+            $table->unique(['organization_id', 'metric_type', 'period_type', 'period'], 'usage_agg_org_metric_period_unique');
             $table->index(['organization_id', 'period_type', 'period']);
         });
 

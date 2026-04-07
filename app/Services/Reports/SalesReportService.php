@@ -334,11 +334,21 @@ class SalesReportService
         string $endDate,
         string $groupBy = 'day' // day, week, month
     ): array {
+        // Allowlist guard: ensure $groupBy is a known value before it reaches DB::raw
+        if (!in_array($groupBy, ['day', 'week', 'month'], true)) {
+            $groupBy = 'day';
+        }
+
         $dateFormat = match ($groupBy) {
             'week' => '%Y-W%V',
             'month' => '%Y-%m',
             default => '%Y-%m-%d',
         };
+
+        $driver = DB::connection()->getDriverName();
+        $periodExpr = $driver === 'sqlite'
+            ? "strftime('{$dateFormat}', invoice_date)"
+            : "DATE_FORMAT(invoice_date, '{$dateFormat}')";
 
         $query = DB::table('invoices')
             ->where('organization_id', $this->organizationId)
@@ -351,7 +361,7 @@ class SalesReportService
 
         $trends = $query->groupBy('period')
             ->select([
-                DB::raw("DATE_FORMAT(invoice_date, '{$dateFormat}') as period"),
+                DB::raw("{$periodExpr} as period"),
                 DB::raw('COUNT(*) as invoice_count'),
                 DB::raw('SUM(subtotal) as subtotal'),
                 DB::raw('SUM(discount_amount) as discount'),

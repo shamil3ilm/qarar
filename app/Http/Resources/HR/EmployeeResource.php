@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\HR;
 
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class EmployeeResource extends JsonResource
 {
+    use MasksSensitiveData;
+
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'employee_number' => $this->employee_number,
 
             // Name
@@ -88,21 +92,21 @@ class EmployeeResource extends JsonResource
             'is_on_probation' => $this->isOnProbation(),
 
             // Documents
-            'national_id' => $this->national_id,
-            'passport_number' => $this->passport_number,
+            'national_id' => $this->maskNationalId($this->national_id),
+            'passport_number' => $this->maskNationalId($this->passport_number),
             'passport_expiry' => $this->passport_expiry?->toDateString(),
             'visa_number' => $this->visa_number,
             'visa_expiry' => $this->visa_expiry?->toDateString(),
             'work_permit_number' => $this->work_permit_number,
             'work_permit_expiry' => $this->work_permit_expiry?->toDateString(),
-            'tax_number' => $this->tax_number,
+            'tax_number' => $this->maskTaxNumber($this->tax_number),
 
             // Bank
             'payment_mode' => $this->payment_mode,
             'bank_name' => $this->bank_name,
-            'bank_account_number' => $this->bank_account_number,
+            'bank_account_number' => $this->maskBankAccount($this->bank_account_number),
             'bank_ifsc_code' => $this->bank_ifsc_code,
-            'bank_iban' => $this->bank_iban,
+            'bank_iban' => $this->maskIban($this->bank_iban),
             'currency_code' => $this->currency_code,
 
             // Related data

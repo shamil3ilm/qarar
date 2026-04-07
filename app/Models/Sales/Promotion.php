@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace App\Models\Sales;
 
+use App\Exceptions\ERP\ValidationException;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Inventory\Product;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class Promotion extends Model
 {
-    use BelongsToOrganization;
+    use HasFactory, BelongsToOrganization;
 
     protected $fillable = [
         'organization_id',
@@ -402,14 +405,22 @@ class Promotion extends Model
 
     public function recordUsage(int $orderId, string $orderType, ?int $customerId, string $discountAmount): void
     {
-        $this->usages()->create([
-            'contact_id' => $customerId,
-            'order_type' => $orderType,
-            'order_id' => $orderId,
-            'discount_amount' => $discountAmount,
-        ]);
+        DB::transaction(function () use ($orderId, $orderType, $customerId, $discountAmount) {
+            $fresh = static::lockForUpdate()->findOrFail($this->id);
 
-        $this->increment('current_uses');
+            if ($fresh->max_uses !== null && $fresh->current_uses >= $fresh->max_uses) {
+                throw new ValidationException('Promotion usage limit reached.');
+            }
+
+            $fresh->increment('current_uses');
+
+            $fresh->usages()->create([
+                'contact_id' => $customerId,
+                'order_type' => $orderType,
+                'order_id' => $orderId,
+                'discount_amount' => $discountAmount,
+            ]);
+        });
     }
 }
 

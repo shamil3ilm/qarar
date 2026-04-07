@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Sales;
 
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class ContactResource extends JsonResource
 {
+    use MasksSensitiveData;
+
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'contact_type' => $this->contact_type,
             'company_name' => $this->company_name,
             'contact_name' => $this->contact_name,
@@ -22,7 +26,7 @@ class ContactResource extends JsonResource
             'phone' => $this->phone,
             'mobile' => $this->mobile,
             'website' => $this->website,
-            'tax_number' => $this->tax_number,
+            'tax_number' => $this->maskTaxNumber($this->tax_number),
             'tax_registration_name' => $this->tax_registration_name,
             'payment_terms' => $this->payment_terms,
             'credit_limit' => $this->credit_limit,

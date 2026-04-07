@@ -35,52 +35,23 @@ return new class extends Migration
             $table->date('last_reconciled_date')->nullable();
             $table->decimal('last_reconciled_balance', 18, 4)->nullable();
 
+            $table->decimal('bank_balance', 15, 2)->default(0); // Last known bank balance
             $table->boolean('is_default')->default(false);
             $table->boolean('is_active')->default(true);
+            $table->json('settings')->nullable(); // Bank-specific settings
 
             $table->timestamps();
             $table->softDeletes();
 
             $table->unique(['organization_id', 'account_number', 'bank_name']);
             $table->index(['organization_id', 'is_active']);
-
-            $table->foreign('currency_code')->references('code')->on('currencies');
         });
 
-        // Bank transactions for reconciliation
-        Schema::create('bank_transactions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('bank_account_id')->constrained()->cascadeOnDelete();
-            $table->date('transaction_date');
-            $table->string('reference', 100)->nullable();
-            $table->text('description')->nullable();
-
-            $table->decimal('debit', 18, 4)->default(0);
-            $table->decimal('credit', 18, 4)->default(0);
-            $table->decimal('running_balance', 18, 4)->default(0);
-
-            // Reconciliation
-            $table->boolean('is_reconciled')->default(false);
-            $table->date('reconciled_date')->nullable();
-
-            // Link to journal entry
-            $table->foreignId('journal_entry_id')->nullable()->constrained()->nullOnDelete();
-            $table->foreignId('journal_line_id')->nullable()->constrained('journal_entry_lines')->nullOnDelete();
-
-            // Source document
-            $table->string('source_type', 50)->nullable();
-            $table->unsignedBigInteger('source_id')->nullable();
-
-            $table->timestamps();
-
-            $table->index(['bank_account_id', 'transaction_date']);
-            $table->index(['bank_account_id', 'is_reconciled']);
-        });
+        // bank_transactions created in 2024_01_24_000001_create_bank_reconciliation_tables.php
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('bank_transactions');
         Schema::dropIfExists('bank_accounts');
     }
 };

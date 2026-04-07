@@ -38,20 +38,28 @@ class JournalEntryLine extends Model
         static::saving(function (JournalEntryLine $line) {
             // Calculate base currency amounts if not set
             if ($line->base_debit === null || $line->base_debit == 0) {
-                $line->base_debit = $line->debit * ($line->journalEntry->exchange_rate ?? 1);
+                $exchangeRate = $line->journalEntry->exchange_rate ?? 1;
+                $line->base_debit = bcmul((string) $line->debit, (string) $exchangeRate, 4);
             }
             if ($line->base_credit === null || $line->base_credit == 0) {
-                $line->base_credit = $line->credit * ($line->journalEntry->exchange_rate ?? 1);
+                $exchangeRate = $line->journalEntry->exchange_rate ?? 1;
+                $line->base_credit = bcmul((string) $line->credit, (string) $exchangeRate, 4);
             }
         });
 
         static::saved(function (JournalEntryLine $line) {
             // Recalculate parent totals
-            $line->journalEntry->recalculateTotals();
+            $entry = $line->journalEntry;
+            if ($entry) {
+                $entry->recalculateTotals();
+            }
         });
 
         static::deleted(function (JournalEntryLine $line) {
-            $line->journalEntry->recalculateTotals();
+            $entry = $line->journalEntry;
+            if ($entry) {
+                $entry->recalculateTotals();
+            }
         });
     }
 

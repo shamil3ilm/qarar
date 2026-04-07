@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Reports;
 
 use App\Http\Controllers\Controller;
-use App\Services\Reports\DashboardService;
+use App\Services\Reports\DashboardStatisticsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -13,7 +13,7 @@ use Illuminate\Support\Carbon;
 class DashboardController extends Controller
 {
     public function __construct(
-        private DashboardService $dashboardService
+        private DashboardStatisticsService $dashboardService
     ) {}
 
     /**
@@ -36,7 +36,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getDashboardStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -59,7 +59,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getSalesStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -82,7 +82,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getPurchaseStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -92,7 +92,7 @@ class DashboardController extends Controller
     {
         $stats = $this->dashboardService->getInventoryStats();
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -115,7 +115,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getHrStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -138,7 +138,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getCrmStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -161,7 +161,7 @@ class DashboardController extends Controller
 
         $stats = $this->dashboardService->getManufacturingStats($startDate, $endDate);
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -175,7 +175,7 @@ class DashboardController extends Controller
 
         $activity = $this->dashboardService->getRecentActivity($validated['limit'] ?? 20);
 
-        return response()->json(['data' => $activity]);
+        return $this->success($activity);
     }
 
     /**
@@ -185,6 +185,6 @@ class DashboardController extends Controller
     {
         $alerts = $this->dashboardService->getAlerts();
 
-        return response()->json(['data' => $alerts]);
+        return $this->success($alerts);
     }
 }

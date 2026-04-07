@@ -41,14 +41,18 @@ class ApiException extends Exception
     /**
      * Render the exception as HTTP response.
      */
-    public function render(): JsonResponse
+    public function render(\Illuminate\Http\Request $request): JsonResponse
     {
         return response()->json([
             'success' => false,
             'error' => [
-                'code' => $this->errorCode,
+                'code'    => $this->errorCode,
                 'message' => $this->getMessage(),
                 'details' => $this->details,
+            ],
+            'meta' => [
+                'request_id' => $request->header('X-Request-ID', (string) \Illuminate\Support\Str::uuid()),
+                'timestamp'  => now()->toIso8601String(),
             ],
         ], $this->httpStatus);
     }
@@ -59,6 +63,11 @@ class ApiException extends Exception
     }
 
     public function getHttpStatus(): int
+    {
+        return $this->httpStatus;
+    }
+
+    public function getStatusCode(): int
     {
         return $this->httpStatus;
     }

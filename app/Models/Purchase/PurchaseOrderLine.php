@@ -8,12 +8,17 @@ use App\Models\Inventory\Product;
 use App\Models\Inventory\ProductVariant;
 use App\Models\Inventory\UnitOfMeasure;
 use App\Models\Inventory\Warehouse;
+use App\Models\Projects\Project;
+use App\Models\Projects\WbsElement;
 use App\Models\Tax\TaxCategory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PurchaseOrderLine extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'purchase_order_id',
         'product_id',
@@ -30,10 +35,20 @@ class PurchaseOrderLine extends Model
         'tax_category_id',
         'tax_rate',
         'tax_amount',
+        'tax_code',
+        'cgst_rate',
+        'cgst_amount',
+        'sgst_rate',
+        'sgst_amount',
+        'igst_rate',
+        'igst_amount',
         'subtotal',
         'total',
         'warehouse_id',
         'line_order',
+        'wbs_element_id',
+        'project_id',
+        'account_assignment_type',
     ];
 
     protected function casts(): array
@@ -88,6 +103,16 @@ class PurchaseOrderLine extends Model
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(Warehouse::class);
+    }
+
+    public function wbsElement(): BelongsTo
+    {
+        return $this->belongsTo(WbsElement::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
     }
 
     public function calculateTotals(): void

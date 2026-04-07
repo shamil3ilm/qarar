@@ -44,7 +44,7 @@ class ExportController extends Controller
         $invoices = $query->get();
 
         if ($invoices->isEmpty()) {
-            return response()->json(['message' => 'No invoices found for export.'], 404);
+            return $this->notFound('No invoices found for export.');
         }
 
         $filePath = $this->invoiceExportService->exportToCsv($invoices);

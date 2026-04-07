@@ -38,7 +38,7 @@ return new class extends Migration
             $table->foreignId('closed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
-            $table->unique(['fiscal_year_id', 'period_number', 'period_type']);
+            $table->unique(['fiscal_year_id', 'period_number', 'period_type'], 'acct_periods_fy_num_type_unique');
         });
     }
 

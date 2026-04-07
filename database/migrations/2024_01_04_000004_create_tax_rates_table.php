@@ -8,24 +8,26 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Tax Rates (per country/category)
-        Schema::create('tax_rates', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('tax_category_id')->constrained()->cascadeOnDelete();
+        // Tax Rates (per country/category) - skip if already created by inventory migration
+        if (!Schema::hasTable('tax_rates')) {
+            Schema::create('tax_rates', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('tax_category_id')->constrained()->cascadeOnDelete();
 
-            $table->string('name', 100);
-            $table->decimal('rate', 8, 4);  // e.g., 15.0000 for 15%
-            $table->string('country_code', 2);
+                $table->string('name', 100);
+                $table->decimal('rate', 8, 4);  // e.g., 15.0000 for 15%
+                $table->string('country_code', 2);
 
-            $table->date('effective_from');
-            $table->date('effective_to')->nullable();
-            $table->boolean('is_active')->default(true);
+                $table->date('effective_from');
+                $table->date('effective_to')->nullable();
+                $table->boolean('is_active')->default(true);
 
-            $table->timestamps();
+                $table->timestamps();
 
-            $table->index(['tax_category_id', 'country_code']);
-            $table->index(['country_code', 'effective_from']);
-        });
+                $table->index(['tax_category_id', 'country_code']);
+                $table->index(['country_code', 'effective_from']);
+            });
+        }
 
         // HSN/SAC Codes (for India GST)
         Schema::create('hsn_sac_codes', function (Blueprint $table) {

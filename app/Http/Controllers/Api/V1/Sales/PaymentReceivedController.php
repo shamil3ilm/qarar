@@ -6,11 +6,12 @@ namespace App\Http\Controllers\Api\V1\Sales;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Sales\PaymentReceivedResource;
+use App\Models\Sales\Invoice;
 use App\Models\Sales\PaymentReceived;
 use App\Services\Sales\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class PaymentReceivedController extends Controller
 {
@@ -21,34 +22,27 @@ class PaymentReceivedController extends Controller
     /**
      * List payments.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = PaymentReceived::with(['customer', 'bankAccount'])
             ->latest('payment_date');
 
-        if ($request->has('customer_id')) {
-            $query->forCustomer($request->integer('customer_id'));
-        }
-
-        if ($request->has('status')) {
-            $query->where('status', $request->input('status'));
-        }
-
-        if ($request->has('payment_method')) {
-            $query->byMethod($request->input('payment_method'));
-        }
-
-        if ($request->has('from_date')) {
-            $query->where('payment_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('payment_date', '<=', $request->input('to_date'));
-        }
+        $query
+            ->when($request->customer_id, fn ($q, $v) => $q->forCustomer((int) $v))
+            ->when($request->status, fn ($q, $v) => $q->where('status', $v))
+            ->when($request->payment_method, fn ($q, $v) => $q->byMethod($v))
+            ->when(
+                $request->input('from_date', $request->input('start_date')),
+                fn ($q, $v) => $q->where('payment_date', '>=', $v)
+            )
+            ->when(
+                $request->input('to_date', $request->input('end_date')),
+                fn ($q, $v) => $q->where('payment_date', '<=', $v)
+            );
 
         $payments = $query->paginate($request->integer('per_page', 15));
 
-        return PaymentReceivedResource::collection($payments);
+        return $this->paginated($payments, PaymentReceivedResource::class);
     }
 
     /**
@@ -57,10 +51,10 @@ class PaymentReceivedController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'customer_id' => 'required|integer|exists:contacts,id',
-            'branch_id' => 'nullable|integer|exists:branches,id',
+            'customer_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')->where('organization_id', auth()->user()->organization_id)],
             'payment_date' => 'required|date',
-            'bank_account_id' => 'nullable|integer|exists:bank_accounts,id',
+            'bank_account_id' => ['nullable', 'integer', Rule::exists('bank_accounts', 'id')->where('organization_id', auth()->user()->organization_id)],
             'payment_method' => 'required|in:cash,bank_transfer,cheque,credit_card,online,other',
             'amount' => 'required|numeric|gt:0',
             'currency_code' => 'nullable|string|size:3',
@@ -68,20 +62,33 @@ class PaymentReceivedController extends Controller
             'reference' => 'nullable|string|max:100',
             'notes' => 'nullable|string|max:2000',
             'allocations' => 'nullable|array',
-            'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
+            'allocations.*.invoice_id' => ['required', 'integer', Rule::exists('invoices', 'id')->where('organization_id', auth()->user()->organization_id)],
             'allocations.*.amount' => 'required|numeric|gt:0',
         ]);
+
+        // Validate allocation amounts don't exceed invoice due amounts
+        if (!empty($validated['allocations'])) {
+            $invoiceIds = array_column($validated['allocations'], 'invoice_id');
+            $invoices = Invoice::whereIn('id', $invoiceIds)->get()->keyBy('id');
+
+            foreach ($validated['allocations'] as $allocation) {
+                $invoice = $invoices->get($allocation['invoice_id']);
+                if ($invoice && $allocation['amount'] > (float) $invoice->amount_due) {
+                    return $this->error(
+                        "Allocation amount ({$allocation['amount']}) exceeds invoice amount due ({$invoice->amount_due}).",
+                        'VALIDATION_ERROR',
+                        422
+                    );
+                }
+            }
+        }
 
         $payment = $this->paymentService->create(
             collect($validated)->except('allocations')->toArray(),
             $validated['allocations'] ?? []
         );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment created successfully.',
-            'data' => new PaymentReceivedResource($payment),
-        ], 201);
+        return $this->created(new PaymentReceivedResource($payment), 'Payment created successfully.');
     }
 
     /**
@@ -96,10 +103,7 @@ class PaymentReceivedController extends Controller
             'journalEntry.lines',
         ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => new PaymentReceivedResource($paymentReceived),
-        ]);
+        return $this->success(new PaymentReceivedResource($paymentReceived));
     }
 
     /**
@@ -107,13 +111,13 @@ class PaymentReceivedController extends Controller
      */
     public function complete(PaymentReceived $paymentReceived): JsonResponse
     {
-        $payment = $this->paymentService->complete($paymentReceived);
+        try {
+            $payment = $this->paymentService->complete($paymentReceived);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment completed successfully.',
-            'data' => new PaymentReceivedResource($payment),
-        ]);
+        return $this->success(new PaymentReceivedResource($payment), 'Payment completed successfully.');
     }
 
     /**
@@ -122,16 +126,16 @@ class PaymentReceivedController extends Controller
     public function void(Request $request, PaymentReceived $paymentReceived): JsonResponse
     {
         $request->validate([
-            'reason' => 'required|string|max:500',
+            'reason' => 'nullable|string|max:500',
         ]);
 
-        $payment = $this->paymentService->void($paymentReceived, $request->input('reason'));
+        try {
+            $payment = $this->paymentService->void($paymentReceived, $request->input('reason', ''));
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment voided successfully.',
-            'data' => new PaymentReceivedResource($payment),
-        ]);
+        return $this->success(new PaymentReceivedResource($payment), 'Payment voided successfully.');
     }
 
     /**
@@ -140,16 +144,16 @@ class PaymentReceivedController extends Controller
     public function bounce(Request $request, PaymentReceived $paymentReceived): JsonResponse
     {
         $request->validate([
-            'reason' => 'required|string|max:500',
+            'reason' => 'nullable|string|max:500',
         ]);
 
-        $payment = $this->paymentService->recordBounce($paymentReceived, $request->input('reason'));
+        try {
+            $payment = $this->paymentService->recordBounce($paymentReceived, $request->input('reason', ''));
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Cheque bounce recorded.',
-            'data' => new PaymentReceivedResource($payment),
-        ]);
+        return $this->success(new PaymentReceivedResource($payment), 'Cheque bounce recorded.');
     }
 
     /**
@@ -159,25 +163,83 @@ class PaymentReceivedController extends Controller
     {
         $validated = $request->validate([
             'allocations' => 'required|array|min:1',
-            'allocations.*.invoice_id' => 'required|integer|exists:invoices,id',
+            'allocations.*.invoice_id' => ['required', 'integer', Rule::exists('invoices', 'id')->where('organization_id', auth()->user()->organization_id)],
             'allocations.*.amount' => 'required|numeric|gt:0',
         ]);
 
-        $results = [];
-        foreach ($validated['allocations'] as $allocation) {
-            $invoice = \App\Models\Sales\Invoice::findOrFail($allocation['invoice_id']);
-            $alloc = $this->paymentService->allocate($paymentReceived, $invoice, $allocation['amount']);
-            $results[] = $alloc;
+        try {
+            $results = [];
+            foreach ($validated['allocations'] as $allocation) {
+                $invoice = \App\Models\Sales\Invoice::findOrFail($allocation['invoice_id']);
+                $alloc = $this->paymentService->allocate($paymentReceived, $invoice, $allocation['amount']);
+                $results[] = $alloc;
+            }
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment allocated successfully.',
-            'data' => [
-                'allocations' => $results,
-                'unallocated_amount' => $paymentReceived->fresh()->getUnallocatedAmount(),
+        return $this->success([
+            'allocations' => $results,
+            'unallocated_amount' => $paymentReceived->fresh()->getUnallocatedAmount(),
+        ], 'Payment allocated successfully.');
+    }
+
+    /**
+     * List open (unpaid / partially paid) invoices for a customer.
+     */
+    public function openItems(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'customer_id' => [
+                'required',
+                Rule::exists('contacts', 'id')
+                    ->where('organization_id', auth()->user()->organization_id),
             ],
         ]);
+
+        $invoices = Invoice::where('customer_id', $validated['customer_id'])
+            ->whereIn('status', [
+                Invoice::STATUS_SENT,
+                Invoice::STATUS_PARTIAL,
+                Invoice::STATUS_OVERDUE,
+            ])
+            ->orderBy('invoice_date')
+            ->get(['id', 'uuid', 'invoice_number', 'invoice_date', 'due_date', 'total', 'amount_paid', 'amount_due', 'status', 'currency_code']);
+
+        return $this->success($invoices);
+    }
+
+    /**
+     * Clear open items: apply unallocated payments to selected invoices.
+     */
+    public function clearOpenItems(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'customer_id' => [
+                'required',
+                Rule::exists('contacts', 'id')
+                    ->where('organization_id', auth()->user()->organization_id),
+            ],
+            'invoice_ids' => ['required', 'array', 'min:1'],
+            'invoice_ids.*' => [
+                'required',
+                'integer',
+                Rule::exists('invoices', 'id')
+                    ->where('organization_id', auth()->user()->organization_id),
+            ],
+            'clearing_date' => ['nullable', 'date'],
+        ]);
+
+        $customer = \App\Models\Sales\Contact::findOrFail($validated['customer_id']);
+        $clearingDate = $validated['clearing_date'] ?? now()->toDateString();
+
+        $result = $this->paymentService->clearOpenItems(
+            $customer,
+            $validated['invoice_ids'],
+            $clearingDate
+        );
+
+        return $this->success($result, 'Open items cleared successfully.');
     }
 
     /**
@@ -186,13 +248,7 @@ class PaymentReceivedController extends Controller
     public function destroy(PaymentReceived $paymentReceived): JsonResponse
     {
         if ($paymentReceived->status !== PaymentReceived::STATUS_PENDING) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Only pending payments can be deleted.',
-                ],
-            ], 422);
+            return $this->error('Only pending payments can be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         // Remove allocations first
@@ -202,10 +258,7 @@ class PaymentReceivedController extends Controller
 
         $paymentReceived->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment deleted successfully.',
-        ]);
+        return $this->success(null, 'Payment deleted successfully.');
     }
 
     /**
@@ -213,15 +266,15 @@ class PaymentReceivedController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
-        $query = PaymentReceived::completed();
-
-        if ($request->has('from_date')) {
-            $query->where('payment_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('payment_date', '<=', $request->input('to_date'));
-        }
+        $query = PaymentReceived::completed()
+            ->when(
+                $request->has('from_date') || $request->has('start_date'),
+                fn($q) => $q->where('payment_date', '>=', $request->input('from_date', $request->input('start_date')))
+            )
+            ->when(
+                $request->has('to_date') || $request->has('end_date'),
+                fn($q) => $q->where('payment_date', '<=', $request->input('to_date', $request->input('end_date')))
+            );
 
         $stats = [
             'total_payments' => $query->count(),
@@ -233,9 +286,6 @@ class PaymentReceivedController extends Controller
                 ->keyBy('payment_method'),
         ];
 
-        return response()->json([
-            'success' => true,
-            'data' => $stats,
-        ]);
+        return $this->success($stats);
     }
 }

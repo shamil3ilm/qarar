@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Cache;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class OrganizationBranding extends Model
 {
+    use HasFactory;
     protected $table = 'organization_branding';
 
     protected $fillable = [

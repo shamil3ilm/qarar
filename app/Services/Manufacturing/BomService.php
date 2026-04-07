@@ -19,15 +19,15 @@ class BomService
     /**
      * Create a new BOM template.
      */
-    public function create(array $data, array $lines = [], array $operations = []): BomTemplate
+    public function create(array $data, array $lines = [], array $operations = [], int $userId = 0): BomTemplate
     {
-        return DB::transaction(function () use ($data, $lines, $operations) {
+        return DB::transaction(function () use ($data, $lines, $operations, $userId) {
             if (empty($data['bom_number'])) {
                 $data['bom_number'] = $this->numberGenerator->generate('BOM');
             }
 
             $data['status'] = $data['status'] ?? BomTemplate::STATUS_DRAFT;
-            $data['created_by'] = auth()->id();
+            $data['created_by'] = $userId ?: null;
 
             $bom = BomTemplate::create($data);
 
@@ -41,7 +41,7 @@ class BomService
                 $this->createOperation($bom, $operationData, $index);
             }
 
-            return $bom->fresh(['lines.product', 'operations']);
+            return $bom->fresh(['lines.product', 'lines.variant', 'lines.unit', 'operations']);
         });
     }
 
@@ -73,7 +73,15 @@ class BomService
                 }
             }
 
-            return $bom->fresh(['lines.product', 'operations']);
+            // Re-validate circular dependencies after updating lines
+            $bom->refresh();
+            if ($this->detectCircularDependency($bom->product_id, $bom->id)) {
+                throw new \App\Exceptions\ERP\ValidationException(
+                    'BOM update would create a circular component dependency.'
+                );
+            }
+
+            return $bom->fresh(['lines.product', 'lines.variant', 'lines.unit', 'operations']);
         });
     }
 
@@ -121,13 +129,55 @@ class BomService
      */
     public function activate(BomTemplate $bom): BomTemplate
     {
-        if ($bom->lines()->count() === 0) {
-            throw new \InvalidArgumentException('BOM must have at least one line to be activated.');
+        if (!in_array($bom->status, [BomTemplate::STATUS_DRAFT, BomTemplate::STATUS_INACTIVE], true)) {
+            throw new \InvalidArgumentException('Only draft or inactive BOMs can be activated.');
+        }
+
+        if ($this->detectCircularDependency($bom->product_id, $bom->id)) {
+            throw new \App\Exceptions\ERP\ValidationException(
+                'Cannot activate BOM: circular component dependency detected.'
+            );
         }
 
         $bom->update(['status' => BomTemplate::STATUS_ACTIVE]);
 
         return $bom->fresh();
+    }
+
+    /**
+     * Detect circular component dependencies in BOMs.
+     * Returns true if activating a BOM for $productId would create a cycle.
+     *
+     * @param  array<int, bool>  $visited
+     */
+    private function detectCircularDependency(int $productId, int $bomId, array $visited = []): bool
+    {
+        if (in_array($productId, $visited, true)) {
+            return true; // Circular reference detected
+        }
+
+        $visited[] = $productId;
+
+        // Find all non-deleted BOM lines where the BOM belongs to this product.
+        // Draft BOMs are included so that cycles introduced in draft are caught
+        // before they can be activated later.
+        // Retrieve the org from the BOM being validated so we only check BOMs
+        // within the same organization (prevents cross-tenant false positives).
+        $orgId = BomTemplate::where('id', $bomId)->value('organization_id');
+
+        $childLines = BomLine::whereHas('bomTemplate', function ($q) use ($productId, $orgId) {
+            $q->where('product_id', $productId)
+              ->whereNull('deleted_at')
+              ->where('organization_id', $orgId);
+        })->get();
+
+        foreach ($childLines as $line) {
+            if ($this->detectCircularDependency($line->product_id, $bomId, $visited)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -143,9 +193,9 @@ class BomService
     /**
      * Duplicate a BOM template.
      */
-    public function duplicate(BomTemplate $bom, ?array $overrides = []): BomTemplate
+    public function duplicate(BomTemplate $bom, ?array $overrides = [], int $userId = 0): BomTemplate
     {
-        return DB::transaction(function () use ($bom, $overrides) {
+        return DB::transaction(function () use ($bom, $overrides, $userId) {
             $newBom = BomTemplate::create([
                 'organization_id' => $bom->organization_id,
                 'bom_number' => $this->numberGenerator->generate('BOM'),
@@ -162,7 +212,7 @@ class BomService
                 'status' => BomTemplate::STATUS_DRAFT,
                 'version' => 1,
                 'notes' => $bom->notes,
-                'created_by' => auth()->id(),
+                'created_by' => $userId ?: null,
             ]);
 
             // Duplicate lines
@@ -207,15 +257,17 @@ class BomService
      */
     public function createNewVersion(BomTemplate $bom): BomTemplate
     {
-        $newVersion = $bom->version + 1;
+        return DB::transaction(function () use ($bom) {
+            $newVersion = $bom->version + 1;
 
-        // Deactivate the current version
-        $bom->update(['status' => BomTemplate::STATUS_INACTIVE]);
+            // Deactivate the current version
+            $bom->update(['status' => BomTemplate::STATUS_INACTIVE]);
 
-        return $this->duplicate($bom, [
-            'name' => $bom->name,
-        ])->tap(function ($newBom) use ($newVersion) {
-            $newBom->update(['version' => $newVersion]);
+            return $this->duplicate($bom, [
+                'name' => $bom->name,
+            ])->tap(function ($newBom) use ($newVersion) {
+                $newBom->update(['version' => $newVersion]);
+            });
         });
     }
 
@@ -224,10 +276,11 @@ class BomService
      */
     public function getCostBreakdown(BomTemplate $bom, float $quantity = 1): array
     {
+        $bom->loadMissing(['lines.product', 'operations']);
         $costs = $bom->calculateTotalCost($quantity);
 
         $materialBreakdown = [];
-        $multiplier = $quantity / (float) $bom->output_quantity;
+        $multiplier = bcdiv((string) $quantity, (string) $bom->output_quantity, 6);
 
         foreach ($bom->lines as $line) {
             $lineQuantity = (float) $line->quantity * $multiplier;
@@ -249,7 +302,7 @@ class BomService
 
         $laborBreakdown = [];
         foreach ($bom->operations as $operation) {
-            $hours = ($operation->estimated_minutes / 60) * $multiplier;
+            $hours = bcmul(bcdiv((string) $operation->estimated_minutes, '60', 6), $multiplier, 6);
             $operationCost = (float) bcmul((string) $hours, (string) ($operation->labor_cost_per_hour ?? 0), 4);
 
             $laborBreakdown[] = [

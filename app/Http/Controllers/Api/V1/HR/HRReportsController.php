@@ -9,7 +9,6 @@ use App\Services\HR\HRReportService;
 use App\Services\HR\StatutoryDeductionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class HRReportsController extends Controller
 {
@@ -29,7 +28,7 @@ class HRReportsController extends Controller
 
         $data = $this->reportService->getDashboardSummary();
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -37,14 +36,10 @@ class HRReportsController extends Controller
      */
     public function headcount(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'as_of_date' => 'nullable|date',
             'department_id' => 'nullable|integer|exists:departments,id',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -55,7 +50,7 @@ class HRReportsController extends Controller
             $request->get('department_id')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -63,14 +58,10 @@ class HRReportsController extends Controller
      */
     public function turnover(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -81,7 +72,7 @@ class HRReportsController extends Controller
             $request->get('end_date')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -89,15 +80,11 @@ class HRReportsController extends Controller
      */
     public function attendance(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'department_id' => 'nullable|integer|exists:departments,id',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -109,7 +96,7 @@ class HRReportsController extends Controller
             $request->get('department_id')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -117,15 +104,11 @@ class HRReportsController extends Controller
      */
     public function leaveAnalysis(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'department_id' => 'nullable|integer|exists:departments,id',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -137,7 +120,7 @@ class HRReportsController extends Controller
             $request->get('department_id')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -145,14 +128,10 @@ class HRReportsController extends Controller
      */
     public function payrollSummary(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -163,7 +142,7 @@ class HRReportsController extends Controller
             $request->get('end_date')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -193,7 +172,7 @@ class HRReportsController extends Controller
             ];
         }
 
-        return response()->json(['data' => $response]);
+        return $this->success($response);
     }
 
     /**
@@ -201,17 +180,13 @@ class HRReportsController extends Controller
      */
     public function calculateStatutory(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'gross_salary' => 'required|numeric|min:0',
             'country_code' => 'nullable|string|size:2',
             'employee_id' => 'nullable|integer|exists:employees,id',
             'state' => 'nullable|string', // For India PT
             'tax_regime' => 'nullable|string|in:new,old', // For India TDS
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
         $countryCode = $request->get('country_code', $user->organization->country_code);
@@ -237,13 +212,11 @@ class HRReportsController extends Controller
 
         $deductions = $this->statutoryService->calculateDeductions($employee, $grossSalary, $countryCode);
 
-        return response()->json([
-            'data' => [
-                'gross_salary' => $grossSalary,
-                'country_code' => $countryCode,
-                ...$deductions,
-                'net_after_statutory' => $grossSalary - $deductions['total_employee'],
-            ],
+        return $this->success([
+            'gross_salary' => $grossSalary,
+            'country_code' => $countryCode,
+            ...$deductions,
+            'net_after_statutory' => $grossSalary - $deductions['total_employee'],
         ]);
     }
 
@@ -252,14 +225,10 @@ class HRReportsController extends Controller
      */
     public function statutoryCompliance(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -270,6 +239,6 @@ class HRReportsController extends Controller
             $user->organization->country_code
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 }

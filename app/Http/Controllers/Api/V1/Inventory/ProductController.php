@@ -11,18 +11,19 @@ use App\Models\Inventory\Product;
 use App\Services\Inventory\ProductService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class ProductController extends Controller
 {
     public function __construct(
         private ProductService $productService
-    ) {}
+    ) {
+    }
 
     /**
      * List products with filters.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $products = $this->productService->search(
             $request->only([
@@ -32,7 +33,7 @@ class ProductController extends Controller
             $request->integer('per_page', 15)
         );
 
-        return ProductResource::collection($products);
+        return $this->paginated($products, ProductResource::class);
     }
 
     /**
@@ -40,16 +41,16 @@ class ProductController extends Controller
      */
     public function store(ProductRequest $request): JsonResponse
     {
-        $product = $this->productService->create(
-            $request->validated(),
-            $request->input('variants', [])
-        );
+        try {
+            $product = $this->productService->create(
+                $request->validated(),
+                $request->input('variants', [])
+            );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Product created successfully.',
-            'data' => new ProductResource($product),
-        ], 201);
+            return $this->created(new ProductResource($product), 'Product created successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -59,10 +60,7 @@ class ProductController extends Controller
     {
         $product = $this->productService->getWithDetails($product);
 
-        return response()->json([
-            'success' => true,
-            'data' => new ProductResource($product),
-        ]);
+        return $this->success(new ProductResource($product));
     }
 
     /**
@@ -72,11 +70,7 @@ class ProductController extends Controller
     {
         $product = $this->productService->update($product, $request->validated());
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Product updated successfully.',
-            'data' => new ProductResource($product),
-        ]);
+        return $this->success(new ProductResource($product), 'Product updated successfully.');
     }
 
     /**
@@ -84,12 +78,13 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
-        $this->productService->delete($product);
+        try {
+            $this->productService->delete($product);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Product deleted successfully.',
-        ]);
+            return $this->success(null, 'Product deleted successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -99,10 +94,7 @@ class ProductController extends Controller
     {
         $summary = $this->productService->getStockSummary($product);
 
-        return response()->json([
-            'success' => true,
-            'data' => $summary,
-        ]);
+        return $this->success($summary);
     }
 
     /**
@@ -111,21 +103,21 @@ class ProductController extends Controller
     public function clone(Request $request, Product $product): JsonResponse
     {
         $request->validate([
-            'sku' => 'required|string|max:50|unique:products,sku',
+            'sku' => ['required', 'string', 'max:50', Rule::unique('products', 'sku')->where('organization_id', auth()->user()->organization_id)],
             'name' => 'nullable|string|max:200',
         ]);
 
-        $cloned = $this->productService->clone(
-            $product,
-            $request->input('sku'),
-            $request->input('name')
-        );
+        try {
+            $cloned = $this->productService->clone(
+                $product,
+                $request->input('sku'),
+                $request->input('name')
+            );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Product cloned successfully.',
-            'data' => new ProductResource($cloned),
-        ], 201);
+            return $this->created(new ProductResource($cloned), 'Product cloned successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -137,10 +129,7 @@ class ProductController extends Controller
             $request->input('warehouse_id')
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $products,
-        ]);
+        return $this->success($products);
     }
 
     /**
@@ -159,10 +148,6 @@ class ProductController extends Controller
             $request->input('updates')
         );
 
-        return response()->json([
-            'success' => true,
-            'message' => "Updated {$results['updated']} products.",
-            'data' => $results,
-        ]);
+        return $this->success($results, "Updated {$results['updated']} products.");
     }
 }

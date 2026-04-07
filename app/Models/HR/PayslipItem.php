@@ -17,6 +17,8 @@ class PayslipItem extends Model
         'amount',
         'ytd_amount',
         'sort_order',
+        'reference_type',
+        'reference_id',
     ];
 
     protected function casts(): array

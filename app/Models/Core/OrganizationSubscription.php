@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class OrganizationSubscription extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'organization_id',
         'plan_id',
@@ -106,7 +108,7 @@ class OrganizationSubscription extends Model
             return null;
         }
 
-        return max(0, Carbon::now()->diffInDays($this->expires_at, false));
+        return (int) max(0, Carbon::now()->diffInDays($this->expires_at, false));
     }
 
     public function trialDaysRemaining(): ?int
@@ -115,7 +117,7 @@ class OrganizationSubscription extends Model
             return null;
         }
 
-        return max(0, Carbon::now()->diffInDays($this->trial_ends_at, false));
+        return (int) max(0, Carbon::now()->diffInDays($this->trial_ends_at, false));
     }
 
     /**

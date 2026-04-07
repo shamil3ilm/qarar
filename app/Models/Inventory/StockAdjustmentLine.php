@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Models\Inventory;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class StockAdjustmentLine extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'stock_adjustment_id',
         'product_id',

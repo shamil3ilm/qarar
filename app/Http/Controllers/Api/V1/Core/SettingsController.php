@@ -9,6 +9,7 @@ use App\Models\Core\FeatureFlag;
 use App\Models\Core\NumberSequence;
 use App\Models\Core\UserPreference;
 use App\Models\System\Setting;
+use App\Services\Core\RegionalDefaultsService;
 use App\Services\Core\SettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,10 +35,7 @@ class SettingsController extends Controller
 
         $settings = $this->settingsService->getAll($organizationId);
 
-        return response()->json([
-            'success' => true,
-            'data' => $settings,
-        ]);
+        return $this->success($settings, 'Settings retrieved successfully');
     }
 
     /**
@@ -49,13 +47,10 @@ class SettingsController extends Controller
 
         $settings = Setting::getGroup($group, $organizationId);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'group' => $group,
-                'settings' => $settings,
-            ],
-        ]);
+        return $this->success([
+            'group' => $group,
+            'settings' => $settings,
+        ], 'Settings group retrieved successfully');
     }
 
     /**
@@ -68,14 +63,11 @@ class SettingsController extends Controller
         $value = $this->settingsService->get($key, $organizationId);
         $definition = $this->settingsService->getDefinition($key);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'key' => $key,
-                'value' => $value,
-                'definition' => $definition,
-            ],
-        ]);
+        return $this->success([
+            'key' => $key,
+            'value' => $value,
+            'definition' => $definition,
+        ], 'Setting retrieved successfully');
     }
 
     /**
@@ -83,6 +75,8 @@ class SettingsController extends Controller
      */
     public function update(Request $request, string $key): JsonResponse
     {
+
+
         $request->validate([
             'value' => 'present',
         ]);
@@ -92,14 +86,10 @@ class SettingsController extends Controller
         try {
             $this->settingsService->set($key, $request->input('value'), $organizationId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Setting updated successfully',
-                'data' => [
-                    'key' => $key,
-                    'value' => $this->settingsService->get($key, $organizationId),
-                ],
-            ]);
+            return $this->success([
+                'key' => $key,
+                'value' => $this->settingsService->get($key, $organizationId),
+            ], 'Setting updated successfully');
         } catch (\InvalidArgumentException $e) {
             throw ValidationException::withMessages(['value' => $e->getMessage()]);
         }
@@ -126,17 +116,10 @@ class SettingsController extends Controller
         }
 
         if (!empty($errors)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Some settings could not be updated',
-                'errors' => $errors,
-            ], 422);
+            return $this->validationError($errors);
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Settings updated successfully',
-        ]);
+        return $this->success(null, 'Settings updated successfully');
     }
 
     /**
@@ -144,22 +127,31 @@ class SettingsController extends Controller
      */
     public function updateGroup(Request $request, string $group): JsonResponse
     {
+
+
         $request->validate([
             'settings' => 'required|array',
         ]);
 
         $organizationId = auth()->user()->organization_id;
 
-        Setting::setGroup($group, $request->input('settings'), $organizationId);
+        $errors = [];
+        foreach ($request->input('settings') as $key => $value) {
+            try {
+                $this->settingsService->set("{$group}.{$key}", $value, $organizationId);
+            } catch (\InvalidArgumentException $e) {
+                $errors[$key] = $e->getMessage();
+            }
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Group settings updated successfully',
-            'data' => [
-                'group' => $group,
-                'settings' => Setting::getGroup($group, $organizationId),
-            ],
-        ]);
+        if (!empty($errors)) {
+            return $this->validationError($errors);
+        }
+
+        return $this->success([
+            'group' => $group,
+            'settings' => Setting::getGroup($group, $organizationId),
+        ], 'Group settings updated successfully');
     }
 
     /**
@@ -171,14 +163,10 @@ class SettingsController extends Controller
 
         $this->settingsService->delete($key, $organizationId);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Setting reset to default',
-            'data' => [
-                'key' => $key,
-                'value' => $this->settingsService->get($key, $organizationId),
-            ],
-        ]);
+        return $this->success([
+            'key' => $key,
+            'value' => $this->settingsService->get($key, $organizationId),
+        ], 'Setting reset to default');
     }
 
     /**
@@ -186,10 +174,10 @@ class SettingsController extends Controller
      */
     public function getDefinitions(): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'data' => $this->settingsService->getDefinitions(),
-        ]);
+        return $this->success(
+            $this->settingsService->getDefinitions(),
+            'Setting definitions retrieved successfully'
+        );
     }
 
     // ==========================================
@@ -203,10 +191,10 @@ class SettingsController extends Controller
     {
         $userId = auth()->id();
 
-        return response()->json([
-            'success' => true,
-            'data' => UserPreference::getAllForUser($userId),
-        ]);
+        return $this->success(
+            UserPreference::getAllForUser($userId),
+            'User preferences retrieved successfully'
+        );
     }
 
     /**
@@ -217,13 +205,10 @@ class SettingsController extends Controller
         $userId = auth()->id();
         $value = UserPreference::getValue($userId, $key);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'key' => $key,
-                'value' => $value,
-            ],
-        ]);
+        return $this->success([
+            'key' => $key,
+            'value' => $value,
+        ], 'Preference retrieved successfully');
     }
 
     /**
@@ -238,14 +223,10 @@ class SettingsController extends Controller
         $userId = auth()->id();
         UserPreference::setValue($userId, $key, $request->input('value'));
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Preference saved',
-            'data' => [
-                'key' => $key,
-                'value' => $request->input('value'),
-            ],
-        ]);
+        return $this->success([
+            'key' => $key,
+            'value' => $request->input('value'),
+        ], 'Preference saved');
     }
 
     /**
@@ -263,11 +244,7 @@ class SettingsController extends Controller
             UserPreference::setValue($userId, $key, $value);
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Preferences saved',
-            'data' => UserPreference::getAllForUser($userId),
-        ]);
+        return $this->success(UserPreference::getAllForUser($userId), 'Preferences saved');
     }
 
     /**
@@ -278,10 +255,7 @@ class SettingsController extends Controller
         $userId = auth()->id();
         UserPreference::deleteValue($userId, $key);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Preference deleted',
-        ]);
+        return $this->success(null, 'Preference deleted');
     }
 
     // ==========================================
@@ -295,10 +269,7 @@ class SettingsController extends Controller
     {
         $organizationId = auth()->user()->organization_id;
 
-        return response()->json([
-            'success' => true,
-            'data' => FeatureFlag::getAllForOrganization($organizationId),
-        ]);
+        return $this->success(FeatureFlag::getAllForOrganization($organizationId));
     }
 
     /**
@@ -308,13 +279,10 @@ class SettingsController extends Controller
     {
         $organizationId = auth()->user()->organization_id;
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'feature' => $feature,
-                'enabled' => FeatureFlag::isEnabled($organizationId, $feature),
-                'config' => FeatureFlag::getConfig($organizationId, $feature),
-            ],
+        return $this->success([
+            'feature' => $feature,
+            'enabled' => FeatureFlag::isEnabled($organizationId, $feature),
+            'config' => FeatureFlag::getConfig($organizationId, $feature),
         ]);
     }
 
@@ -323,19 +291,17 @@ class SettingsController extends Controller
      */
     public function enableFeature(Request $request, string $feature): JsonResponse
     {
+
+
         $organizationId = auth()->user()->organization_id;
         $config = $request->input('config');
 
         FeatureFlag::enableFeature($organizationId, $feature, $config);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Feature enabled',
-            'data' => [
-                'feature' => $feature,
-                'enabled' => true,
-            ],
-        ]);
+        return $this->success([
+            'feature' => $feature,
+            'enabled' => true,
+        ], 'Feature enabled');
     }
 
     /**
@@ -343,18 +309,16 @@ class SettingsController extends Controller
      */
     public function disableFeature(string $feature): JsonResponse
     {
+
+
         $organizationId = auth()->user()->organization_id;
 
         FeatureFlag::disableFeature($organizationId, $feature);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Feature disabled',
-            'data' => [
-                'feature' => $feature,
-                'enabled' => false,
-            ],
-        ]);
+        return $this->success([
+            'feature' => $feature,
+            'enabled' => false,
+        ], 'Feature disabled');
     }
 
     /**
@@ -362,10 +326,7 @@ class SettingsController extends Controller
      */
     public function getAvailableFeatures(): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'data' => FeatureFlag::getAvailableFeatures(),
-        ]);
+        return $this->success(FeatureFlag::getAvailableFeatures());
     }
 
     // ==========================================
@@ -397,10 +358,7 @@ class SettingsController extends Controller
                 'next_number' => $seq->getFormattedNumber(),
             ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => $sequences,
-        ]);
+        return $this->success($sequences);
     }
 
     /**
@@ -419,40 +377,34 @@ class SettingsController extends Controller
         if (!$sequence) {
             // Return default configuration
             $default = NumberSequence::DEFAULT_CONFIGS[$type] ?? ['prefix' => strtoupper($type) . '-', 'padding' => 5];
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'type' => $type,
-                    'prefix' => $default['prefix'] ?? null,
-                    'suffix' => $default['suffix'] ?? null,
-                    'current_number' => 0,
-                    'padding' => $default['padding'] ?? 5,
-                    'include_year' => $default['include_year'] ?? true,
-                    'include_month' => $default['include_month'] ?? false,
-                    'reset_yearly' => $default['reset_yearly'] ?? true,
-                    'reset_monthly' => $default['reset_monthly'] ?? false,
-                    'is_default' => true,
-                ],
+            return $this->success([
+                'type' => $type,
+                'prefix' => $default['prefix'] ?? null,
+                'suffix' => $default['suffix'] ?? null,
+                'current_number' => 0,
+                'padding' => $default['padding'] ?? 5,
+                'include_year' => $default['include_year'] ?? true,
+                'include_month' => $default['include_month'] ?? false,
+                'reset_yearly' => $default['reset_yearly'] ?? true,
+                'reset_monthly' => $default['reset_monthly'] ?? false,
+                'is_default' => true,
             ]);
         }
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'id' => $sequence->id,
-                'type' => $sequence->type,
-                'branch_id' => $sequence->branch_id,
-                'prefix' => $sequence->prefix,
-                'suffix' => $sequence->suffix,
-                'current_number' => $sequence->current_number,
-                'padding' => $sequence->padding,
-                'include_year' => $sequence->include_year,
-                'include_month' => $sequence->include_month,
-                'reset_yearly' => $sequence->reset_yearly,
-                'reset_monthly' => $sequence->reset_monthly,
-                'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
-                'is_default' => false,
-            ],
+        return $this->success([
+            'id' => $sequence->id,
+            'type' => $sequence->type,
+            'branch_id' => $sequence->branch_id,
+            'prefix' => $sequence->prefix,
+            'suffix' => $sequence->suffix,
+            'current_number' => $sequence->current_number,
+            'padding' => $sequence->padding,
+            'include_year' => $sequence->include_year,
+            'include_month' => $sequence->include_month,
+            'reset_yearly' => $sequence->reset_yearly,
+            'reset_monthly' => $sequence->reset_monthly,
+            'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
+            'is_default' => false,
         ]);
     }
 
@@ -461,6 +413,8 @@ class SettingsController extends Controller
      */
     public function updateNumberSequence(Request $request, string $type): JsonResponse
     {
+
+
         $request->validate([
             'branch_id' => 'nullable|exists:branches,id',
             'prefix' => 'nullable|string|max:20',
@@ -496,15 +450,11 @@ class SettingsController extends Controller
             ], fn($v) => $v !== null)
         );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Number sequence updated',
-            'data' => [
-                'id' => $sequence->id,
-                'type' => $sequence->type,
-                'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
-            ],
-        ]);
+        return $this->success([
+            'id' => $sequence->id,
+            'type' => $sequence->type,
+            'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
+        ], 'Number sequence updated');
     }
 
     /**
@@ -515,12 +465,9 @@ class SettingsController extends Controller
         $organizationId = auth()->user()->organization_id;
         $branchId = $request->input('branch_id');
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'type' => $type,
-                'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
-            ],
+        return $this->success([
+            'type' => $type,
+            'next_number' => NumberSequence::peekNext($organizationId, $type, $branchId),
         ]);
     }
 
@@ -529,10 +476,7 @@ class SettingsController extends Controller
      */
     public function getSequenceTypes(): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'data' => NumberSequence::DEFAULT_CONFIGS,
-        ]);
+        return $this->success(NumberSequence::DEFAULT_CONFIGS);
     }
 
     // ==========================================
@@ -544,6 +488,8 @@ class SettingsController extends Controller
      */
     public function clearCache(): JsonResponse
     {
+
+
         $organizationId = auth()->user()->organization_id;
 
         $this->settingsService->clearAllCache($organizationId);
@@ -555,9 +501,93 @@ class SettingsController extends Controller
             Cache::forget("feature_flag:{$organizationId}:{$feature}");
         }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Settings cache cleared',
+        return $this->success(null, 'Settings cache cleared');
+    }
+
+    // ==========================================
+    // Regional Settings
+    // ==========================================
+
+    /**
+     * GET /settings/regions
+     * Returns all supported countries with their region labels and currency.
+     */
+    public function regions(): JsonResponse
+    {
+        $countries = app(RegionalDefaultsService::class)->getSupportedCountries();
+
+        return $this->success($countries, 'Supported regions retrieved.');
+    }
+
+    /**
+     * GET /settings/regions/{countryCode}/preview
+     * Returns what defaults would be applied for a country without saving.
+     */
+    public function previewRegionDefaults(string $countryCode): JsonResponse
+    {
+        $service  = app(RegionalDefaultsService::class);
+        $defaults = $service->getDefaultsForCountry(strtoupper($countryCode));
+
+        return $this->success([
+            'country_code' => strtoupper($countryCode),
+            'region'       => $service->getRegionLabel($countryCode),
+            'defaults'     => $defaults,
+        ], 'Regional defaults preview.');
+    }
+
+    /**
+     * POST /settings/initialize-region
+     * Apply regional defaults for the current organization.
+     *
+     * Body: { country_code: "SA", force: false }
+     * When force=false (default): only fills keys that have no existing value.
+     * When force=true: overwrites all settings with regional defaults.
+     */
+    public function initializeRegion(Request $request): JsonResponse
+    {
+
+
+        $validated = $request->validate([
+            'country_code' => ['required', 'string', 'size:2'],
+            'force'        => ['sometimes', 'boolean'],
         ]);
+
+        $orgId  = $this->organizationId($request);
+        if (!$orgId) {
+            return $this->error('Organization not found.', 'ORGANIZATION_NOT_FOUND', 422);
+        }
+        $result = $this->settingsService->initializeByCountry(
+            organizationId: $orgId,
+            countryCode:    strtoupper($validated['country_code']),
+            force:          (bool) ($validated['force'] ?? false),
+        );
+
+        return $this->success($result, 'Regional defaults applied.');
+    }
+
+    /**
+     * POST /settings/bulk-reset-to-region
+     * Hard-reset ALL settings to the org's current country_code defaults.
+     * Equivalent to initializeRegion with force=true, using the org's stored country.
+     */
+    public function resetToRegion(Request $request): JsonResponse
+    {
+        $orgId = $this->organizationId($request);
+        if (!$orgId) {
+            return $this->error('Organization not found.', 'ORGANIZATION_NOT_FOUND', 422);
+        }
+        $org   = \App\Models\Core\Organization::findOrFail($orgId);
+
+        if (empty($org->country_code)) {
+            return $this->error('Organization has no country_code set.', 'MISSING_COUNTRY_CODE', 422);
+        }
+
+        $result = $this->settingsService->initializeByCountry(
+            organizationId: $orgId,
+            countryCode:    $org->country_code,
+            force:          true,
+        );
+
+        return $this->success($result, 'All settings reset to regional defaults.');
     }
 }

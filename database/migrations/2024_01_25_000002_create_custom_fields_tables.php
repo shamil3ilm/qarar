@@ -32,8 +32,8 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 
-            $table->unique(['organization_id', 'entity_type', 'field_name']);
-            $table->index(['organization_id', 'entity_type', 'is_active']);
+            $table->unique(['organization_id', 'entity_type', 'field_name'], 'cf_defs_org_entity_field_unique');
+            $table->index(['organization_id', 'entity_type', 'is_active'], 'cf_defs_org_entity_active_idx');
         });
 
         // Custom field values
@@ -50,7 +50,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->unique(['field_definition_id', 'entity_type', 'entity_id'], 'custom_field_value_unique');
-            $table->index(['entity_type', 'entity_id']);
         });
 
         // Field groups (for organizing custom fields)

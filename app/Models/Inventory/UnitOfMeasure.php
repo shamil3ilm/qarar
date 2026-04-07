@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class UnitOfMeasure extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     protected $table = 'units_of_measure';

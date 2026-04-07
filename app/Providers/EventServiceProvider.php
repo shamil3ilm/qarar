@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Events\Accounting\JournalEntryPosted;
 use App\Events\CRM\LeadConverted;
 use App\Events\CRM\OpportunityWon;
 use App\Events\HR\LeaveRequestApproved;
@@ -20,15 +21,27 @@ use App\Events\Sales\InvoicePaid;
 use App\Events\Sales\InvoicePosted;
 use App\Events\Sales\PaymentReceived;
 use App\Listeners\CRM\CreateOpportunityFromWonListener;
+use App\Listeners\CRM\NotifyLeadConvertedListener;
 use App\Listeners\HR\NotifyEmployeeLeaveApproval;
+use App\Listeners\HR\NotifyEmployeePayslipListener;
 use App\Listeners\HR\NotifyLeaveApprover;
 use App\Listeners\Inventory\CheckLowStockListener;
 use App\Listeners\Inventory\SendLowStockNotification;
+use App\Listeners\Manufacturing\NotifyWorkOrderStartedListener;
+use App\Listeners\Manufacturing\UpdateInventoryOnProductionListener;
 use App\Listeners\Manufacturing\UpdateProductCostListener;
-use App\Listeners\Sales\UpdateCustomerBalanceListener;
+use App\Listeners\Purchase\NotifyBillApprovedListener;
+use App\Listeners\Purchase\UpdateStockOnReceiptListener;
+use App\Listeners\Sales\NotifyInvoicePaidListener;
+use App\Listeners\Core\MonitorFailedJobListener;
+use App\Listeners\Accounting\FanOutToParallelLedgers;
+use App\Listeners\Sales\PostCopaOnInvoicePostedListener;
+use App\Listeners\Sales\UpdateCustomerBalanceOnInvoicePostedListener;
+use App\Listeners\Sales\UpdateCustomerBalanceOnPaymentReceivedListener;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Illuminate\Queue\Events\JobFailed;
 
 class EventServiceProvider extends ServiceProvider
 {
@@ -51,26 +64,32 @@ class EventServiceProvider extends ServiceProvider
             SendLowStockNotification::class,
         ],
 
+        // Accounting Events
+        JournalEntryPosted::class => [
+            FanOutToParallelLedgers::class,
+        ],
+
         // Sales Events
         InvoicePosted::class => [
-            [UpdateCustomerBalanceListener::class, 'handleInvoicePosted'],
+            UpdateCustomerBalanceOnInvoicePostedListener::class,
+            PostCopaOnInvoicePostedListener::class,
         ],
 
         InvoicePaid::class => [
-            // Add listeners for invoice paid event
+            NotifyInvoicePaidListener::class,
         ],
 
         PaymentReceived::class => [
-            [UpdateCustomerBalanceListener::class, 'handlePaymentReceived'],
+            UpdateCustomerBalanceOnPaymentReceivedListener::class,
         ],
 
         // Purchase Events
         BillApproved::class => [
-            // Add listeners for bill approved event
+            NotifyBillApprovedListener::class,
         ],
 
         PurchaseOrderReceived::class => [
-            // Add listeners for PO received event
+            UpdateStockOnReceiptListener::class,
         ],
 
         // HR Events
@@ -83,12 +102,12 @@ class EventServiceProvider extends ServiceProvider
         ],
 
         PayslipGenerated::class => [
-            // Add listeners for payslip generated event
+            NotifyEmployeePayslipListener::class,
         ],
 
         // Manufacturing Events
         WorkOrderStarted::class => [
-            // Add listeners for work order started event
+            NotifyWorkOrderStartedListener::class,
         ],
 
         WorkOrderCompleted::class => [
@@ -96,16 +115,21 @@ class EventServiceProvider extends ServiceProvider
         ],
 
         ProductionRecorded::class => [
-            // Add listeners for production recorded event
+            UpdateInventoryOnProductionListener::class,
         ],
 
         // CRM Events
         LeadConverted::class => [
-            // Add listeners for lead converted event
+            NotifyLeadConvertedListener::class,
         ],
 
         OpportunityWon::class => [
             CreateOpportunityFromWonListener::class,
+        ],
+
+        // System Events
+        JobFailed::class => [
+            MonitorFailedJobListener::class,
         ],
     ];
 

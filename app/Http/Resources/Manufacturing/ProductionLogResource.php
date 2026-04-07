@@ -26,7 +26,7 @@ class ProductionLogResource extends JsonResource
             'rejection_reason' => $this->rejection_reason,
 
             // Quality
-            'quality_checked' => $this->quality_checked,
+            'is_quality_checked' => $this->is_quality_checked,
             'quality_checked_by' => $this->quality_checked_by,
             'quality_checker' => $this->whenLoaded('qualityCheckedBy', fn() => [
                 'id' => $this->qualityCheckedBy->id,

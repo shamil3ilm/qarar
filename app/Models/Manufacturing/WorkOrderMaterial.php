@@ -12,8 +12,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class WorkOrderMaterial extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'work_order_id',
         'bom_line_id',

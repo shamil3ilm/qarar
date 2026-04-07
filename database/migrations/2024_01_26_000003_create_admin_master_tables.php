@@ -187,7 +187,7 @@ return new class extends Migration
         Schema::create('system_announcements', function (Blueprint $table) {
             $table->id();
             $table->uuid('uuid')->unique();
-            $table->foreignId('admin_id')->constrained('platform_admins')->cascadeOnDelete();
+            $table->foreignId('admin_id')->nullable()->constrained('platform_admins')->nullOnDelete();
             $table->string('title');
             $table->text('content');
             $table->string('type', 30)->default('info'); // info, warning, maintenance, feature, critical
@@ -201,6 +201,8 @@ return new class extends Migration
             $table->string('action_text')->nullable();
             $table->timestamp('starts_at');
             $table->timestamp('ends_at')->nullable();
+            $table->string('status', 20)->default('draft'); // draft, scheduled, published, archived
+            $table->timestamp('published_at')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 
@@ -237,7 +239,7 @@ return new class extends Migration
         Schema::create('feature_flags', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->string('slug', 100)->unique();
+            $table->string('code', 100)->unique();
             $table->text('description')->nullable();
             $table->boolean('is_enabled')->default(false);
             $table->string('rollout_type', 30)->default('all'); // all, percentage, specific, subscription_plan
@@ -246,7 +248,7 @@ return new class extends Migration
             $table->json('specific_subscription_plans')->nullable();
             $table->timestamp('starts_at')->nullable();
             $table->timestamp('ends_at')->nullable();
-            $table->foreignId('created_by')->constrained('platform_admins')->cascadeOnDelete();
+            $table->foreignId('created_by')->nullable()->constrained('platform_admins')->nullOnDelete();
             $table->timestamps();
 
             $table->index(['is_enabled', 'rollout_type']);

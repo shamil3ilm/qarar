@@ -5,20 +5,23 @@ declare(strict_types=1);
 namespace App\Models\Purchase;
 
 use App\Models\Accounting\JournalEntry;
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\Sales\Contact;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 class Bill extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasUuid, HasStateMachine, SoftDeletes;
 
     public const TYPE_STANDARD = 'standard';
     public const TYPE_DEBIT_NOTE = 'debit_note';
@@ -29,12 +32,14 @@ class Bill extends Model
     public const STATUS_APPROVED = 'approved';
     public const STATUS_PARTIAL = 'partial';
     public const STATUS_PAID = 'paid';
+    public const STATUS_OVERDUE = 'overdue';
     public const STATUS_VOIDED = 'voided';
 
     protected $fillable = [
         'organization_id',
         'branch_id',
         'bill_number',
+        'reference',
         'supplier_invoice_number',
         'bill_type',
         'purchase_order_id',
@@ -61,6 +66,7 @@ class Bill extends Model
         'place_of_supply',
         'is_reverse_charge',
         'journal_entry_id',
+        'reference',
         'notes',
         'version',
         'created_by',
@@ -89,7 +95,7 @@ class Bill extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }
@@ -99,10 +105,11 @@ class Bill extends Model
         return [
             self::STATUS_DRAFT => [self::STATUS_PENDING, self::STATUS_APPROVED, self::STATUS_VOIDED],
             self::STATUS_PENDING => [self::STATUS_APPROVED, self::STATUS_VOIDED],
-            self::STATUS_APPROVED => [self::STATUS_PARTIAL, self::STATUS_PAID, self::STATUS_VOIDED],
-            self::STATUS_PARTIAL => [self::STATUS_PAID, self::STATUS_VOIDED],
-            self::STATUS_PAID => [],
-            self::STATUS_VOIDED => [],
+            self::STATUS_APPROVED => [self::STATUS_PARTIAL, self::STATUS_PAID, self::STATUS_OVERDUE, self::STATUS_VOIDED],
+            self::STATUS_PARTIAL  => [self::STATUS_PAID, self::STATUS_OVERDUE, self::STATUS_VOIDED],
+            self::STATUS_OVERDUE  => [self::STATUS_PARTIAL, self::STATUS_PAID, self::STATUS_VOIDED],
+            self::STATUS_PAID     => [],
+            self::STATUS_VOIDED   => [],
         ];
     }
 
@@ -177,6 +184,12 @@ class Bill extends Model
 
     public function recalculateTotals(): void
     {
+        if (!in_array($this->status, [self::STATUS_DRAFT, self::STATUS_PENDING], true)) {
+            throw new \InvalidArgumentException(
+                "Cannot recalculate totals on bill #{$this->bill_number} with status '{$this->status}'."
+            );
+        }
+
         $subtotal = $this->lines()->sum('subtotal');
         $taxAmount = $this->lines()->sum('tax_amount');
 
@@ -202,19 +215,32 @@ class Bill extends Model
 
     public function recordPayment(float $amount): void
     {
-        $newAmountPaid = bcadd((string) $this->amount_paid, (string) $amount, 4);
-        $newAmountDue = bcsub((string) $this->total, (string) $newAmountPaid, 4);
+        DB::transaction(function () use ($amount): void {
+            $bill = static::lockForUpdate()->findOrFail($this->id);
 
-        $this->amount_paid = $newAmountPaid;
-        $this->amount_due = max(0, (float) $newAmountDue);
+            $payableStatuses = [self::STATUS_APPROVED, self::STATUS_PARTIAL, self::STATUS_OVERDUE];
+            if (!in_array($bill->status, $payableStatuses, true)) {
+                throw new \InvalidArgumentException(
+                    "Cannot record payment on bill #{$bill->bill_number} with status '{$bill->status}'."
+                );
+            }
 
-        if (bccomp((string) $this->amount_due, '0', 4) <= 0) {
-            $this->status = self::STATUS_PAID;
-        } elseif (bccomp((string) $this->amount_paid, '0', 4) > 0) {
-            $this->status = self::STATUS_PARTIAL;
-        }
+            $newAmountPaid = bcadd((string) $bill->amount_paid, (string) $amount, 4);
+            $newAmountDue = bcsub((string) $bill->total, (string) $newAmountPaid, 4);
 
-        $this->save();
+            $bill->amount_paid = $newAmountPaid;
+            $bill->amount_due = max(0, (float) $newAmountDue);
+            $bill->save();
+
+            // Update status via state machine based on payment
+            if (bccomp((string) $bill->amount_due, '0', 4) <= 0) {
+                $bill->transitionTo(self::STATUS_PAID);
+            } elseif (bccomp((string) $bill->amount_paid, '0', 4) > 0) {
+                $bill->transitionTo(self::STATUS_PARTIAL);
+            }
+
+            $this->refresh();
+        });
     }
 
     public function getDaysPastDue(): int
@@ -223,7 +249,7 @@ class Bill extends Model
             return 0;
         }
 
-        return $this->due_date->diffInDays(now());
+        return (int) $this->due_date->diffInDays(now());
     }
 
     public function scopeDraft($query)
@@ -233,7 +259,7 @@ class Bill extends Model
 
     public function scopeUnpaid($query)
     {
-        return $query->whereIn('status', [self::STATUS_APPROVED, self::STATUS_PARTIAL]);
+        return $query->whereIn('status', [self::STATUS_APPROVED, self::STATUS_PARTIAL, self::STATUS_OVERDUE]);
     }
 
     public function scopeOverdue($query)

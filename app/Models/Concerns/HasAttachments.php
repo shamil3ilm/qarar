@@ -64,7 +64,8 @@ trait HasAttachments
             $file,
             $this,
             $this->organization_id ?? auth()->user()?->organization_id,
-            $options
+            $options,
+            (int) auth()->id()
         );
     }
 
@@ -77,7 +78,8 @@ trait HasAttachments
             $files,
             $this,
             $this->organization_id ?? auth()->user()?->organization_id,
-            $options
+            $options,
+            (int) auth()->id()
         );
     }
 
@@ -113,10 +115,12 @@ trait HasAttachments
         $service = app(\App\Services\Core\AttachmentService::class);
         $deleted = 0;
 
-        foreach ($this->attachments as $attachment) {
-            $service->delete($attachment, $force);
-            $deleted++;
-        }
+        $this->attachments()->chunk(100, function ($attachments) use ($service, $force, &$deleted) {
+            foreach ($attachments as $attachment) {
+                $service->delete($attachment, $force);
+                $deleted++;
+            }
+        });
 
         return $deleted;
     }

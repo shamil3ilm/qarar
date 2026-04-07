@@ -56,6 +56,9 @@ return new class extends Migration
             $table->string('image_url', 500)->nullable();
             $table->json('gallery_urls')->nullable();
 
+            // Variants
+            $table->boolean('has_variants')->default(false);
+
             // Status
             $table->boolean('is_active')->default(true);
             $table->boolean('is_purchasable')->default(true);
@@ -85,6 +88,7 @@ return new class extends Migration
             $table->string('image_url', 500)->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
+            $table->softDeletes();
 
             $table->unique(['product_id', 'sku']);
         });

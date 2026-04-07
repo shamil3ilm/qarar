@@ -244,7 +244,8 @@ class HRDashboardService
         });
 
         $today = now()->toDateString();
-        $thisMonth = now()->format('Y-m');
+        $currentYear = (int) now()->format('Y');
+        $currentMonth = (int) now()->format('m');
 
         return [
             'pending_approval' => (clone $query)->where('status', 'pending')->count(),
@@ -255,11 +256,13 @@ class HRDashboardService
                 ->count(),
             'approved_this_month' => (clone $query)
                 ->where('status', 'approved')
-                ->whereRaw("DATE_FORMAT(start_date, '%Y-%m') = ?", [$thisMonth])
+                ->whereYear('start_date', $currentYear)
+                ->whereMonth('start_date', $currentMonth)
                 ->count(),
             'rejected_this_month' => (clone $query)
                 ->where('status', 'rejected')
-                ->whereRaw("DATE_FORMAT(created_at, '%Y-%m') = ?", [$thisMonth])
+                ->whereYear('created_at', $currentYear)
+                ->whereMonth('created_at', $currentMonth)
                 ->count(),
         ];
     }
@@ -329,27 +332,39 @@ class HRDashboardService
         $pendingApproval = (clone $payslipQuery)->where('status', 'draft')->count();
         $totalPayslips = (clone $payslipQuery)->count();
 
-        // Get last 6 months payroll trend
-        $payrollTrend = PayrollPeriod::where('organization_id', $this->organizationId)
+        // Last 6 payroll periods + aggregated totals — single JOIN query.
+        $periodIds = PayrollPeriod::where('organization_id', $this->organizationId)
             ->orderByDesc('start_date')
             ->limit(6)
-            ->get()
-            ->map(function ($period) {
-                $query = Payslip::where('payroll_period_id', $period->id);
-                if ($this->branchId) {
-                    $query->whereHas('employee', fn ($q) => $q->where('branch_id', $this->branchId));
-                }
+            ->pluck('id');
 
-                return [
-                    'period' => $period->name,
-                    'month' => $period->start_date->format('M Y'),
-                    'gross' => $query->sum('gross_earnings'),
-                    'net' => $query->sum('net_salary'),
-                    'employees' => $query->count(),
-                ];
+        $payrollTrend = PayrollPeriod::whereIn('id', $periodIds)
+            ->join('payslips', 'payslips.payroll_period_id', '=', 'payroll_periods.id', 'left')
+            ->when($this->branchId, function ($q) {
+                $q->leftJoin('employees as trend_emp', 'trend_emp.id', '=', 'payslips.employee_id')
+                  ->where(function ($sub) {
+                      $sub->whereNull('payslips.id')
+                          ->orWhere('trend_emp.branch_id', $this->branchId);
+                  });
             })
-            ->reverse()
-            ->values();
+            ->selectRaw("
+                payroll_periods.id,
+                payroll_periods.name as period,
+                DATE_FORMAT(payroll_periods.start_date, '%b %Y') as month,
+                COALESCE(SUM(payslips.gross_earnings), 0) as gross,
+                COALESCE(SUM(payslips.net_salary), 0) as net,
+                COUNT(payslips.id) as employees
+            ")
+            ->groupBy('payroll_periods.id', 'payroll_periods.name', 'payroll_periods.start_date')
+            ->orderBy('payroll_periods.start_date')
+            ->get()
+            ->map(fn ($r) => [
+                'period'    => $r->period,
+                'month'     => $r->month,
+                'gross'     => (float) $r->gross,
+                'net'       => (float) $r->net,
+                'employees' => (int)   $r->employees,
+            ]);
 
         return [
             'current_period' => [
@@ -365,7 +380,7 @@ class HRDashboardService
             'total_payslips' => $totalPayslips,
             'employees_paid' => $employeesPaid,
             'pending_approval' => $pendingApproval,
-            'trend' => $payrollTrend->toArray(),
+            'trend' => $payrollTrend->values()->toArray(),
         ];
     }
 
@@ -385,18 +400,17 @@ class HRDashboardService
             $query->where('branch_id', $this->branchId);
         }
 
-        // Get employees with birthdays in the next X days
-        $employees = $query->get()
-            ->filter(function ($employee) use ($today, $endDate) {
-                $birthday = $employee->date_of_birth->setYear($today->year);
+        // DB-level filter using "days until next birthday" (handles year-boundary).
+        // MOD(DATEDIFF(next_birthday_occurrence, today) + 366, 366) gives days until next birthday.
+        $birthdayRaw = "MOD(DATEDIFF(DATE_ADD(date_of_birth, INTERVAL (YEAR(CURDATE()) - YEAR(date_of_birth)) YEAR), CURDATE()) + 366, 366)";
+        $upcomingCount = (clone $query)->whereRaw("{$birthdayRaw} <= ?", [$days])->count();
+        $todayCount    = (clone $query)->whereRaw("{$birthdayRaw} = 0")->count();
 
-                // If birthday this year has passed, check next year
-                if ($birthday->isPast()) {
-                    $birthday = $birthday->addYear();
-                }
-
-                return $birthday->between($today, $endDate);
-            })
+        $employees = $query->whereRaw("{$birthdayRaw} <= ?", [$days])
+        ->with('department:id,name')
+        ->orderByRaw($birthdayRaw)
+        ->limit(10)
+        ->get()
             ->map(function ($employee) use ($today) {
                 $birthday = $employee->date_of_birth->setYear($today->year);
                 if ($birthday->isPast()) {
@@ -418,9 +432,9 @@ class HRDashboardService
             ->values();
 
         return [
-            'upcoming_count' => $employees->count(),
-            'today_count' => $employees->where('is_today', true)->count(),
-            'items' => $employees->take(10)->toArray(),
+            'upcoming_count' => $upcomingCount,
+            'today_count'    => $todayCount,
+            'items'          => $employees->values()->toArray(),
         ];
     }
 
@@ -440,16 +454,16 @@ class HRDashboardService
             $query->where('branch_id', $this->branchId);
         }
 
-        $employees = $query->get()
-            ->filter(function ($employee) use ($today, $endDate) {
-                $anniversary = $employee->date_of_joining->setYear($today->year);
+        // DB-level filter using "days until next work anniversary" (handles year-boundary).
+        $anniversaryRaw = "MOD(DATEDIFF(DATE_ADD(date_of_joining, INTERVAL (YEAR(CURDATE()) - YEAR(date_of_joining)) YEAR), CURDATE()) + 366, 366)";
+        $upcomingCount = (clone $query)->whereRaw("{$anniversaryRaw} <= ?", [$days])->count();
+        $todayCount    = (clone $query)->whereRaw("{$anniversaryRaw} = 0")->count();
 
-                if ($anniversary->isPast()) {
-                    $anniversary = $anniversary->addYear();
-                }
-
-                return $anniversary->between($today, $endDate);
-            })
+        $employees = $query->whereRaw("{$anniversaryRaw} <= ?", [$days])
+        ->with('department:id,name', 'designation:id,name')
+        ->orderByRaw($anniversaryRaw)
+        ->limit(10)
+        ->get()
             ->map(function ($employee) use ($today) {
                 $anniversary = $employee->date_of_joining->setYear($today->year);
                 if ($anniversary->isPast()) {
@@ -477,9 +491,9 @@ class HRDashboardService
             ->values();
 
         return [
-            'upcoming_count' => $employees->count(),
-            'today_count' => $employees->where('is_today', true)->count(),
-            'items' => $employees->take(10)->toArray(),
+            'upcoming_count' => $upcomingCount,
+            'today_count'    => $todayCount,
+            'items'          => $employees->values()->toArray(),
         ];
     }
 
@@ -508,7 +522,16 @@ class HRDashboardService
                 'employees.last_name',
                 'employees.employee_number',
             ])
-            ->orderBy('employee_documents.expiry_date')
+            ->orderBy('employee_documents.expiry_date');
+
+        // Count totals via DB — no full collection loaded.
+        $totalAlerts   = (clone $documents)->count();
+        $expiredCount  = (clone $documents)->where('employee_documents.expiry_date', '<', $today)->count();
+        $expiringSoon  = $totalAlerts - $expiredCount;
+
+        // Only materialize the top 10 items.
+        $items = (clone $documents)
+            ->limit(10)
             ->get()
             ->map(function ($doc) use ($today) {
                 $expiryDate = Carbon::parse($doc->expiry_date);
@@ -529,10 +552,10 @@ class HRDashboardService
             });
 
         return [
-            'total_alerts' => $documents->count(),
-            'expired' => $documents->where('is_expired', true)->count(),
-            'expiring_soon' => $documents->where('is_expired', false)->count(),
-            'items' => $documents->take(10)->toArray(),
+            'total_alerts' => $totalAlerts,
+            'expired' => $expiredCount,
+            'expiring_soon' => $expiringSoon,
+            'items' => $items->toArray(),
         ];
     }
 
@@ -637,31 +660,24 @@ class HRDashboardService
             $query->where('branch_id', $this->branchId);
         }
 
-        $employees = $query->get();
-        $distribution = [
-            '18-25' => 0,
-            '26-35' => 0,
-            '36-45' => 0,
-            '46-55' => 0,
-            '55+' => 0,
+        $rows = $query->selectRaw("
+            CASE
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) <= 25 THEN '18-25'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) <= 35 THEN '26-35'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) <= 45 THEN '36-45'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) <= 55 THEN '46-55'
+                ELSE '55+'
+            END as bracket,
+            COUNT(*) as cnt
+        ")->groupBy('bracket')->pluck('cnt', 'bracket');
+
+        return [
+            '18-25' => (int) ($rows['18-25'] ?? 0),
+            '26-35' => (int) ($rows['26-35'] ?? 0),
+            '36-45' => (int) ($rows['36-45'] ?? 0),
+            '46-55' => (int) ($rows['46-55'] ?? 0),
+            '55+'   => (int) ($rows['55+']   ?? 0),
         ];
-
-        foreach ($employees as $emp) {
-            $age = $emp->date_of_birth->age;
-            if ($age <= 25) {
-                $distribution['18-25']++;
-            } elseif ($age <= 35) {
-                $distribution['26-35']++;
-            } elseif ($age <= 45) {
-                $distribution['36-45']++;
-            } elseif ($age <= 55) {
-                $distribution['46-55']++;
-            } else {
-                $distribution['55+']++;
-            }
-        }
-
-        return $distribution;
     }
 
     /**
@@ -677,31 +693,24 @@ class HRDashboardService
             $query->where('branch_id', $this->branchId);
         }
 
-        $employees = $query->get();
-        $distribution = [
-            '< 1 year' => 0,
-            '1-2 years' => 0,
-            '2-5 years' => 0,
-            '5-10 years' => 0,
-            '10+ years' => 0,
+        $rows = $query->selectRaw("
+            CASE
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, NOW()) < 1  THEN '< 1 year'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, NOW()) < 2  THEN '1-2 years'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, NOW()) < 5  THEN '2-5 years'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, NOW()) < 10 THEN '5-10 years'
+                ELSE '10+ years'
+            END as bracket,
+            COUNT(*) as cnt
+        ")->groupBy('bracket')->pluck('cnt', 'bracket');
+
+        return [
+            '< 1 year'   => (int) ($rows['< 1 year']   ?? 0),
+            '1-2 years'  => (int) ($rows['1-2 years']  ?? 0),
+            '2-5 years'  => (int) ($rows['2-5 years']  ?? 0),
+            '5-10 years' => (int) ($rows['5-10 years'] ?? 0),
+            '10+ years'  => (int) ($rows['10+ years']  ?? 0),
         ];
-
-        foreach ($employees as $emp) {
-            $years = $emp->date_of_joining->diffInYears(now());
-            if ($years < 1) {
-                $distribution['< 1 year']++;
-            } elseif ($years < 2) {
-                $distribution['1-2 years']++;
-            } elseif ($years < 5) {
-                $distribution['2-5 years']++;
-            } elseif ($years < 10) {
-                $distribution['5-10 years']++;
-            } else {
-                $distribution['10+ years']++;
-            }
-        }
-
-        return $distribution;
     }
 
     /**

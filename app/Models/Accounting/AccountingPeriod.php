@@ -8,8 +8,10 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class AccountingPeriod extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'fiscal_year_id',
         'period_number',

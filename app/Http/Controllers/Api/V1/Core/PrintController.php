@@ -15,7 +15,6 @@ use App\Services\Print\PrintService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Validator;
 
 class PrintController extends Controller
 {
@@ -35,7 +34,7 @@ class PrintController extends Controller
             ->get()
             ->groupBy('document_type');
 
-        return response()->json([
+        return $this->success([
             'data' => $templates,
             'document_types' => PrintTemplate::getDocumentTypes(),
             'paper_sizes' => PrintTemplate::getPaperSizeOptions(),
@@ -50,7 +49,7 @@ class PrintController extends Controller
         $template = PrintTemplate::where('organization_id', $request->user()->organization_id)
             ->findOrFail($id);
 
-        return response()->json(['data' => $template]);
+        return $this->success($template);
     }
 
     /**
@@ -58,7 +57,7 @@ class PrintController extends Controller
      */
     public function storeTemplate(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $data = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:100|unique:print_templates,code,NULL,id,organization_id,' . $request->user()->organization_id,
             'document_type' => 'required|string|in:' . implode(',', array_keys(PrintTemplate::getDocumentTypes())),
@@ -76,11 +75,6 @@ class PrintController extends Controller
             'is_default' => 'sometimes|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $data = $validator->validated();
         $data['organization_id'] = $request->user()->organization_id;
 
         // If setting as default, unset other defaults
@@ -93,7 +87,7 @@ class PrintController extends Controller
 
         $template = PrintTemplate::create($data);
 
-        return response()->json(['data' => $template], 201);
+        return $this->created($template);
     }
 
     /**
@@ -104,7 +98,7 @@ class PrintController extends Controller
         $template = PrintTemplate::where('organization_id', $request->user()->organization_id)
             ->findOrFail($id);
 
-        $validator = Validator::make($request->all(), [
+        $data = $request->validate([
             'name' => 'sometimes|string|max:255',
             'settings' => 'nullable|array',
             'template_content' => 'nullable|string',
@@ -119,12 +113,6 @@ class PrintController extends Controller
             'is_active' => 'sometimes|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $data = $validator->validated();
-
         // If setting as default, unset other defaults
         if ($data['is_default'] ?? false) {
             PrintTemplate::where('organization_id', $template->organization_id)
@@ -136,7 +124,7 @@ class PrintController extends Controller
 
         $template->update($data);
 
-        return response()->json(['data' => $template]);
+        return $this->success($template);
     }
 
     /**
@@ -149,7 +137,7 @@ class PrintController extends Controller
 
         $template->delete();
 
-        return response()->json(['message' => 'Template deleted']);
+        return $this->success(null, 'Template deleted');
     }
 
     /**
@@ -161,7 +149,7 @@ class PrintController extends Controller
             ->with('branch')
             ->get();
 
-        return response()->json([
+        return $this->success([
             'data' => $configs,
             'printer_types' => PrintConfiguration::getPrinterTypes(),
         ]);
@@ -172,7 +160,7 @@ class PrintController extends Controller
      */
     public function storeConfiguration(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $data = $request->validate([
             'branch_id' => 'nullable|exists:branches,id',
             'printer_type' => 'required|string|in:' . implode(',', array_keys(PrintConfiguration::getPrinterTypes())),
             'default_paper_size' => 'required|string',
@@ -186,11 +174,6 @@ class PrintController extends Controller
             'is_default' => 'sometimes|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $data = $validator->validated();
         $data['organization_id'] = $request->user()->organization_id;
 
         if ($data['is_default'] ?? false) {
@@ -201,7 +184,7 @@ class PrintController extends Controller
 
         $config = PrintConfiguration::create($data);
 
-        return response()->json(['data' => $config], 201);
+        return $this->created($config);
     }
 
     /**
@@ -212,7 +195,7 @@ class PrintController extends Controller
         $config = PrintConfiguration::where('organization_id', $request->user()->organization_id)
             ->findOrFail($id);
 
-        $validator = Validator::make($request->all(), [
+        $config->update($request->validate([
             'printer_type' => 'sometimes|string',
             'default_paper_size' => 'sometimes|string',
             'thermal_settings' => 'nullable|array',
@@ -223,15 +206,9 @@ class PrintController extends Controller
             'copies' => 'sometimes|integer|min:1|max:5',
             'is_default' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
-        ]);
+        ]));
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $config->update($validator->validated());
-
-        return response()->json(['data' => $config]);
+        return $this->success($config);
     }
 
     /**
@@ -250,7 +227,7 @@ class PrintController extends Controller
         if ($format === 'thermal') {
             $printerType = $request->get('printer_type');
             $data = $this->printService->generateThermalData('invoice', $invoice, $printerType);
-            return response()->json(['data' => $data->toArray()]);
+            return $this->success($data->toArray());
         }
 
         if ($format === 'html') {
@@ -314,7 +291,7 @@ class PrintController extends Controller
         if ($format === 'thermal') {
             $printerType = $request->get('printer_type');
             $data = $this->printService->generateThermalData('payment_receipt', $payment, $printerType);
-            return response()->json(['data' => $data->toArray()]);
+            return $this->success($data->toArray());
         }
 
         if ($format === 'html') {
@@ -367,16 +344,12 @@ class PrintController extends Controller
      */
     public function batch(Request $request): Response|JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'document_type' => 'required|string|in:invoice,quotation,purchase_order,payment_receipt',
             'ids' => 'required|array|min:1|max:50',
             'ids.*' => 'required|integer',
             'paper_size' => 'sometimes|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $documentType = $request->get('document_type');
         $ids = $request->get('ids');
@@ -394,7 +367,7 @@ class PrintController extends Controller
             ->get();
 
         if ($documents->isEmpty()) {
-            return response()->json(['error' => 'No documents found'], 404);
+            return $this->notFound('No documents found');
         }
 
         $pdf = $this->printService->generateBatchPdf($documentType, $documents->all(), $paperSize);
@@ -431,9 +404,9 @@ class PrintController extends Controller
             }
         }
 
-        return response()->json([
-            'message' => "Created {$created} default templates",
-            'created' => $created,
-        ]);
+        return $this->success(
+            ['created' => $created],
+            "Created {$created} default templates"
+        );
     }
 }

@@ -7,18 +7,20 @@ namespace App\Models;
 use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\Core\Branch;
+use App\Models\Core\Notification;
 use App\Models\Core\Organization;
 use App\Models\Core\Permission;
 use App\Models\Core\Role;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 
-class User extends Authenticatable implements JWTSubject
+class User extends Authenticatable implements JWTSubject, \Illuminate\Contracts\Auth\MustVerifyEmail
 {
     use HasFactory, Notifiable, SoftDeletes, HasUuid, HasAuditTrail;
 
@@ -33,25 +35,37 @@ class User extends Authenticatable implements JWTSubject
         'timezone',
         'two_factor_enabled',
         'two_factor_secret',
+        'two_factor_recovery_codes',
+        'two_factor_confirmed_at',
         'is_active',
-        'is_super_admin',
+        // is_super_admin is intentionally excluded from fillable to prevent mass-assignment privilege escalation.
+        // Use direct DB assignment or a dedicated admin promotion method to set this field.
         'last_login_at',
         'last_login_ip',
+        'email_verification_code',
+        'email_verification_code_sent_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
         'two_factor_secret',
+        'two_factor_recovery_codes',
+        'email_verification_code',
     ];
 
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
         'two_factor_enabled' => 'boolean',
+        'two_factor_secret' => 'encrypted',
+        'module_access' => 'array',
+        'two_factor_recovery_codes' => 'array',
+        'two_factor_confirmed_at' => 'datetime',
         'is_active' => 'boolean',
         'is_super_admin' => 'boolean',
         'last_login_at' => 'datetime',
+        'email_verification_code_sent_at' => 'datetime',
     ];
 
     // Fields to exclude from audit
@@ -158,11 +172,19 @@ class User extends Authenticatable implements JWTSubject
             return Permission::pluck('slug')->toArray();
         }
 
-        return $this->roles
+        return $this->roles()->with('permissions')->get()
             ->flatMap(fn (Role $role) => $role->permissions)
             ->unique('id')
             ->pluck('slug')
             ->toArray();
+    }
+
+    /**
+     * Get current branch ID (accessor for convenience).
+     */
+    public function getCurrentBranchIdAttribute(): ?int
+    {
+        return $this->getDefaultBranch()?->id;
     }
 
     // Branch Methods
@@ -193,6 +215,15 @@ class User extends Authenticatable implements JWTSubject
         }
 
         return $this->branches()->where('branches.id', $branchId)->exists();
+    }
+
+    /**
+     * Override the default Laravel notifications() to use our custom Notification model.
+     * This ensures all database-channel notifications include organization_id automatically.
+     */
+    public function notifications(): MorphMany
+    {
+        return $this->morphMany(Notification::class, 'notifiable')->latest();
     }
 
     // Login tracking

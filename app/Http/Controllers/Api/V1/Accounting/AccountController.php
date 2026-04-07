@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Accounting;
 
+use App\Http\Concerns\SupportsAgGrid;
 use App\Http\Controllers\Controller;
 use App\Models\Accounting\Account;
 use App\Services\Accounting\AccountBalanceService;
@@ -13,6 +14,7 @@ use Illuminate\Validation\Rule;
 
 class AccountController extends Controller
 {
+    use SupportsAgGrid;
     public function __construct(
         private AccountBalanceService $balanceService
     ) {}
@@ -24,15 +26,9 @@ class AccountController extends Controller
     {
         $query = Account::with('children')
             ->whereNull('parent_id')
-            ->orderBy('code');
-
-        if ($request->has('type')) {
-            $query->where('account_type', $request->type);
-        }
-
-        if ($request->has('active_only') && $request->boolean('active_only')) {
-            $query->where('is_active', true);
-        }
+            ->orderBy('code')
+            ->when($request->has('type'), fn($q) => $q->where('account_type', $request->type))
+            ->when($request->boolean('active_only'), fn($q) => $q->where('is_active', true));
 
         $accounts = $query->get();
 
@@ -45,18 +41,13 @@ class AccountController extends Controller
     public function flat(Request $request): JsonResponse
     {
         $query = Account::query()
-            ->orderBy('code');
+            ->orderBy('code')
+            ->when($request->has('type'), fn($q) => $q->where('account_type', $request->type))
+            ->when($request->boolean('postable'), fn($q) => $q->where('is_header', false)->where('is_active', true))
+            ->when($request->boolean('active_only'), fn($q) => $q->where('is_active', true));
 
-        if ($request->has('type')) {
-            $query->where('account_type', $request->type);
-        }
-
-        if ($request->has('postable') && $request->boolean('postable')) {
-            $query->where('is_header', false)->where('is_active', true);
-        }
-
-        if ($request->has('active_only') && $request->boolean('active_only')) {
-            $query->where('is_active', true);
+        if ($this->isAgGridRequest($request)) {
+            return $this->applyAgGrid($query, $request);
         }
 
         $accounts = $query->get(['id', 'code', 'name', 'account_type', 'sub_type', 'is_header', 'is_active']);
@@ -111,7 +102,7 @@ class AccountController extends Controller
         $level = 1;
         $path = $validated['code'];
 
-        if ($validated['parent_id']) {
+        if (!empty($validated['parent_id'])) {
             $parent = Account::findOrFail($validated['parent_id']);
             $level = $parent->level + 1;
             $path = "{$parent->path}.{$validated['code']}";
@@ -155,7 +146,7 @@ class AccountController extends Controller
     public function destroy(Account $account): JsonResponse
     {
         if ($account->is_system) {
-            return $this->error('System accounts cannot be deleted', 'SYSTEM_ACCOUNT', 403);
+            return $this->error('System accounts cannot be deleted', 'SYSTEM_ACCOUNT', 400);
         }
 
         // Check for child accounts

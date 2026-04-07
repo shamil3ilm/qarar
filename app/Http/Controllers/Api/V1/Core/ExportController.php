@@ -6,15 +6,14 @@ namespace App\Http\Controllers\Api\V1\Core;
 
 use App\Http\Controllers\Controller;
 use App\Models\Core\ExportJob;
-use App\Services\Core\ExportService;
+use App\Services\Core\AsyncExportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class ExportController extends Controller
 {
     public function __construct(
-        protected ExportService $exportService
+        protected AsyncExportService $exportService
     ) {}
 
     /**
@@ -34,7 +33,7 @@ class ExportController extends Controller
             ];
         }
 
-        return response()->json(['data' => $result]);
+        return $this->success($result);
     }
 
     /**
@@ -42,7 +41,7 @@ class ExportController extends Controller
      */
     public function create(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'entity_type' => 'required|string',
             'format' => 'sometimes|string|in:xlsx,csv,pdf',
             'filters' => 'sometimes|array',
@@ -50,24 +49,20 @@ class ExportController extends Controller
             'columns.*' => 'string',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $user = $request->user();
         $entityType = $request->get('entity_type');
 
         // Validate entity type exists
         $types = ExportJob::getEntityTypes();
         if (!isset($types[$entityType])) {
-            return response()->json(['error' => 'Invalid entity type'], 400);
+            return $this->error('Invalid entity type.', 'VALIDATION_ERROR', 400);
         }
 
         // Check module access
         $moduleService = app(\App\Services\Core\ModuleService::class);
         $module = $types[$entityType]['module'];
         if (!$moduleService->isModuleEnabled($user->organization_id, $module)) {
-            return response()->json(['error' => "Module '{$module}' is not enabled"], 403);
+            return $this->error("Module '{$module}' is not enabled.", 'MODULE_DISABLED', 403);
         }
 
         try {
@@ -82,14 +77,14 @@ class ExportController extends Controller
             // Process immediately (could be queued for large exports)
             $exportJob = $this->exportService->processExport($exportJob);
 
-            return response()->json([
-                'data' => $this->exportService->getStatus($exportJob),
-                'message' => $exportJob->isReady()
-                    ? "Export completed: {$exportJob->total_records} records"
-                    : 'Export is being processed',
-            ], 201);
+            $message = $exportJob->isReady()
+                ? "Export completed: {$exportJob->total_records} records"
+                : 'Export is being processed';
+
+            return $this->created($this->exportService->getStatus($exportJob), $message);
         } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
         }
     }
 
@@ -104,9 +99,7 @@ class ExportController extends Controller
             ->where('organization_id', $user->organization_id)
             ->firstOrFail();
 
-        return response()->json([
-            'data' => $this->exportService->getStatus($exportJob),
-        ]);
+        return $this->success($this->exportService->getStatus($exportJob));
     }
 
     /**
@@ -122,20 +115,20 @@ class ExportController extends Controller
 
         if (!$exportJob->isReady()) {
             if ($exportJob->isExpired()) {
-                return response()->json(['error' => 'Export has expired'], 410);
+                return $this->error('Export has expired.', 'EXPIRED', 410);
             }
 
             if ($exportJob->status === ExportJob::STATUS_FAILED) {
-                return response()->json(['error' => 'Export failed'], 400);
+                return $this->error('Export failed.', 'EXPORT_FAILED', 400);
             }
 
-            return response()->json(['error' => 'Export is not ready for download'], 400);
+            return $this->error('Export is not ready for download.', 'NOT_READY', 400);
         }
 
         $filePath = $this->exportService->download($exportJob);
 
         if (!$filePath) {
-            return response()->json(['error' => 'File not found'], 404);
+            return $this->error('File not found.', 'NOT_FOUND', 404);
         }
 
         $mimeType = match ($exportJob->format) {
@@ -164,23 +157,21 @@ class ExportController extends Controller
             $limit
         );
 
-        return response()->json([
-            'data' => $exports->map(fn ($export) => [
-                'id' => $export->id,
-                'uuid' => $export->uuid,
-                'entity_type' => $export->entity_type,
-                'format' => $export->format,
-                'status' => $export->status,
-                'total_records' => $export->total_records,
-                'file_name' => $export->file_name,
-                'file_size' => $export->file_size,
-                'is_ready' => $export->isReady(),
-                'is_expired' => $export->isExpired(),
-                'download_url' => $export->getDownloadUrl(),
-                'created_at' => $export->created_at->toIso8601String(),
-                'expires_at' => $export->expires_at?->toIso8601String(),
-            ]),
-        ]);
+        return $this->success($exports->map(fn ($export) => [
+            'id' => $export->id,
+            'uuid' => $export->uuid,
+            'entity_type' => $export->entity_type,
+            'format' => $export->format,
+            'status' => $export->status,
+            'total_records' => $export->total_records,
+            'file_name' => $export->file_name,
+            'file_size' => $export->file_size,
+            'is_ready' => $export->isReady(),
+            'is_expired' => $export->isExpired(),
+            'download_url' => $export->getDownloadUrl(),
+            'created_at' => $export->created_at->toIso8601String(),
+            'expires_at' => $export->expires_at?->toIso8601String(),
+        ]));
     }
 
     /**
@@ -188,16 +179,12 @@ class ExportController extends Controller
      */
     public function quickExport(Request $request): mixed
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'entity_type' => 'required|string',
             'format' => 'sometimes|string|in:xlsx,csv',
             'filters' => 'sometimes|array',
             'columns' => 'sometimes|array',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
         $entityType = $request->get('entity_type');
@@ -205,7 +192,7 @@ class ExportController extends Controller
         // Validate entity type
         $types = ExportJob::getEntityTypes();
         if (!isset($types[$entityType])) {
-            return response()->json(['error' => 'Invalid entity type'], 400);
+            return $this->error('Invalid entity type.', 'VALIDATION_ERROR', 400);
         }
 
         try {
@@ -220,7 +207,7 @@ class ExportController extends Controller
             $exportJob = $this->exportService->processExport($exportJob);
 
             if (!$exportJob->isReady()) {
-                return response()->json(['error' => 'Export failed'], 400);
+                return $this->error('Export failed.', 'EXPORT_FAILED', 400);
             }
 
             $filePath = $this->exportService->download($exportJob);
@@ -234,7 +221,8 @@ class ExportController extends Controller
                 'Content-Type' => $mimeType,
             ]);
         } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            report($e);
+            return $this->serverError('An unexpected error occurred. Please try again.');
         }
     }
 }

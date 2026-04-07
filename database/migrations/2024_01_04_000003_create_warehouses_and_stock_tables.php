@@ -61,8 +61,7 @@ return new class extends Migration
 
             $table->decimal('quantity', 18, 4)->default(0);
             $table->decimal('reserved_quantity', 18, 4)->default(0); // Reserved for orders
-            $table->decimal('available_quantity', 18, 4)
-                ->storedAs('quantity - reserved_quantity'); // Computed column
+            $table->decimal('available_quantity', 18, 4)->default(0);
 
             // Costing
             $table->decimal('average_cost', 18, 4)->default(0);

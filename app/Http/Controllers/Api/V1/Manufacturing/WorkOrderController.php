@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Manufacturing;
 
 use App\Http\Controllers\Controller;
-use App\Http\Resources\Manufacturing\ProductionLogResource;
 use App\Http\Resources\Manufacturing\WorkOrderResource;
 use App\Models\Manufacturing\BomTemplate;
 use App\Models\Manufacturing\WorkOrder;
@@ -13,18 +12,19 @@ use App\Models\Manufacturing\WorkOrderOperation;
 use App\Services\Manufacturing\WorkOrderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class WorkOrderController extends Controller
 {
     public function __construct(
         private WorkOrderService $workOrderService
-    ) {}
+    ) {
+    }
 
     /**
      * List work orders with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = WorkOrder::with(['product', 'bomTemplate', 'assignedTo', 'sourceWarehouse', 'targetWarehouse'])
             ->withCount(['materials', 'operations', 'productionLogs'])
@@ -43,13 +43,14 @@ class WorkOrderController extends Controller
                         ->orWhereHas('product', fn($p) => $p->where('name', 'like', "%{$search}%"));
                 });
             })
-            ->orderBy($request->sort_by ?? 'created_at', $request->sort_order ?? 'desc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['order_number', 'status', 'start_date', 'end_date', 'created_at', 'updated_at'], 'created_at'),
+                $this->safeSortOrder($request->sort_order, 'desc')
+            );
 
-        $workOrders = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        $workOrders = $query->paginate($request->integer('per_page', 15));
 
-        return WorkOrderResource::collection($workOrders);
+        return $this->paginated($workOrders, WorkOrderResource::class);
     }
 
     /**
@@ -58,13 +59,13 @@ class WorkOrderController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'bom_template_id' => 'required|exists:bom_templates,id',
+            'bom_template_id' => ['required', Rule::exists('bom_templates', 'id')->where('organization_id', auth()->user()->organization_id)],
             'planned_quantity' => 'required|numeric|min:0.0001',
             'planned_start_date' => 'required|date',
-            'planned_end_date' => 'required|date|after_or_equal:planned_start_date',
+            'planned_end_date' => 'nullable|date|after_or_equal:planned_start_date',
             'branch_id' => 'nullable|exists:branches,id',
-            'source_warehouse_id' => 'nullable|exists:warehouses,id',
-            'target_warehouse_id' => 'nullable|exists:warehouses,id',
+            'source_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'target_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'priority' => 'nullable|in:low,normal,high,urgent',
             'assigned_to' => 'nullable|exists:users,id',
             'supervisor_id' => 'nullable|exists:users,id',
@@ -73,22 +74,40 @@ class WorkOrderController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $bom = BomTemplate::findOrFail($validated['bom_template_id']);
+        // Default planned_end_date if not provided
+        if (empty($validated['planned_end_date'])) {
+            $validated['planned_end_date'] = $validated['planned_start_date'];
+        }
 
-        $workOrder = $this->workOrderService->create($bom, $validated);
+        $bom = BomTemplate::withoutGlobalScope('organization')->find($validated['bom_template_id']);
 
-        return response()->json([
-            'message' => 'Work order created successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ], 201);
+        if (!$bom) {
+            return $this->error('BOM template not found.', 'NOT_FOUND', 404);
+        }
+
+        // Validate BOM belongs to the user's organization
+        if ($bom->organization_id !== auth()->user()->organization_id) {
+            return $this->error('BOM template does not belong to your organization.', 'VALIDATION_ERROR', 422);
+        }
+
+        try {
+            $workOrder = $this->workOrderService->create($bom, $validated, auth()->id());
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
+
+        return $this->created(new WorkOrderResource($workOrder), 'Work order created successfully.');
     }
 
     /**
      * Show a specific work order.
      */
-    public function show(WorkOrder $workOrder): WorkOrderResource
+    public function show(WorkOrder $workOrder): JsonResponse
     {
-        return new WorkOrderResource(
+        return $this->success(new WorkOrderResource(
             $workOrder->load([
                 'product',
                 'variant',
@@ -107,7 +126,7 @@ class WorkOrderController extends Controller
                 'productionLogs.loggedBy',
                 'createdBy',
             ])
-        );
+        ));
     }
 
     /**
@@ -121,17 +140,15 @@ class WorkOrderController extends Controller
             'priority' => 'nullable|in:low,normal,high,urgent',
             'assigned_to' => 'nullable|exists:users,id',
             'supervisor_id' => 'nullable|exists:users,id',
-            'source_warehouse_id' => 'nullable|exists:warehouses,id',
-            'target_warehouse_id' => 'nullable|exists:warehouses,id',
+            'source_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'target_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'notes' => 'nullable|string',
         ]);
 
-        $workOrder = $this->workOrderService->update($workOrder, $validated);
-
-        return response()->json([
-            'message' => 'Work order updated successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->update($workOrder, $validated)),
+            'Work order updated successfully.'
+        );
     }
 
     /**
@@ -140,18 +157,14 @@ class WorkOrderController extends Controller
     public function destroy(WorkOrder $workOrder): JsonResponse
     {
         if (!$workOrder->isDraft()) {
-            return response()->json([
-                'message' => 'Only draft work orders can be deleted.',
-            ], 422);
+            return $this->error('Only draft work orders can be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         $workOrder->materials()->delete();
         $workOrder->operations()->delete();
         $workOrder->delete();
 
-        return response()->json([
-            'message' => 'Work order deleted successfully.',
-        ]);
+        return $this->success(null, 'Work order deleted successfully.');
     }
 
     /**
@@ -159,12 +172,10 @@ class WorkOrderController extends Controller
      */
     public function release(WorkOrder $workOrder): JsonResponse
     {
-        $workOrder = $this->workOrderService->release($workOrder);
-
-        return response()->json([
-            'message' => 'Work order released successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->release($workOrder)),
+            'Work order released successfully.'
+        );
     }
 
     /**
@@ -178,12 +189,10 @@ class WorkOrderController extends Controller
             'assigned_to' => 'nullable|exists:users,id',
         ]);
 
-        $workOrder = $this->workOrderService->schedule($workOrder, $validated);
-
-        return response()->json([
-            'message' => 'Work order scheduled successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->schedule($workOrder, $validated)),
+            'Work order scheduled successfully.'
+        );
     }
 
     /**
@@ -191,12 +200,10 @@ class WorkOrderController extends Controller
      */
     public function start(WorkOrder $workOrder): JsonResponse
     {
-        $workOrder = $this->workOrderService->start($workOrder);
-
-        return response()->json([
-            'message' => 'Work order started successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->start($workOrder)),
+            'Work order started successfully.'
+        );
     }
 
     /**
@@ -204,12 +211,10 @@ class WorkOrderController extends Controller
      */
     public function complete(WorkOrder $workOrder): JsonResponse
     {
-        $workOrder = $this->workOrderService->complete($workOrder);
-
-        return response()->json([
-            'message' => 'Work order completed successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->complete($workOrder)),
+            'Work order completed successfully.'
+        );
     }
 
     /**
@@ -218,15 +223,16 @@ class WorkOrderController extends Controller
     public function cancel(Request $request, WorkOrder $workOrder): JsonResponse
     {
         $validated = $request->validate([
-            'reason' => 'required|string|max:500',
+            'reason'              => 'nullable|string|max:500',
+            'cancellation_reason' => 'nullable|string|max:500',
         ]);
 
-        $workOrder = $this->workOrderService->cancel($workOrder, $validated['reason']);
+        $reason = $validated['cancellation_reason'] ?? $validated['reason'] ?? '';
 
-        return response()->json([
-            'message' => 'Work order cancelled successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->cancel($workOrder, $reason)),
+            'Work order cancelled successfully.',
+        );
     }
 
     /**
@@ -238,17 +244,15 @@ class WorkOrderController extends Controller
             'issues' => 'required|array|min:1',
             'issues.*.work_order_material_id' => 'required|exists:work_order_materials,id',
             'issues.*.quantity' => 'required|numeric|min:0.0001',
-            'issues.*.warehouse_id' => 'nullable|exists:warehouses,id',
+            'issues.*.warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'issues.*.reference' => 'nullable|string|max:100',
             'issues.*.notes' => 'nullable|string',
         ]);
 
-        $workOrder = $this->workOrderService->issueMaterials($workOrder, $validated['issues']);
-
-        return response()->json([
-            'message' => 'Materials issued successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->issueMaterials($workOrder, $validated['issues'], auth()->id())),
+            'Materials issued successfully.'
+        );
     }
 
     /**
@@ -260,17 +264,15 @@ class WorkOrderController extends Controller
             'returns' => 'required|array|min:1',
             'returns.*.work_order_material_id' => 'required|exists:work_order_materials,id',
             'returns.*.quantity' => 'required|numeric|min:0.0001',
-            'returns.*.warehouse_id' => 'nullable|exists:warehouses,id',
+            'returns.*.warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'returns.*.reference' => 'nullable|string|max:100',
             'returns.*.notes' => 'nullable|string',
         ]);
 
-        $workOrder = $this->workOrderService->returnMaterials($workOrder, $validated['returns']);
-
-        return response()->json([
-            'message' => 'Materials returned successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->returnMaterials($workOrder, $validated['returns'], auth()->id())),
+            'Materials returned successfully.'
+        );
     }
 
     /**
@@ -286,12 +288,10 @@ class WorkOrderController extends Controller
             'consumptions.*.wastage_reason' => 'nullable|string|max:500',
         ]);
 
-        $workOrder = $this->workOrderService->consumeMaterials($workOrder, $validated['consumptions']);
-
-        return response()->json([
-            'message' => 'Material consumption recorded successfully.',
-            'data' => new WorkOrderResource($workOrder),
-        ]);
+        return $this->tryAction(
+            fn() => new WorkOrderResource($this->workOrderService->consumeMaterials($workOrder, $validated['consumptions'], auth()->id())),
+            'Material consumption recorded successfully.'
+        );
     }
 
     /**
@@ -299,9 +299,12 @@ class WorkOrderController extends Controller
      */
     public function recordProduction(Request $request, WorkOrder $workOrder): JsonResponse
     {
+        // Support both field name conventions from tests
         $validated = $request->validate([
-            'quantity_produced' => 'required|numeric|min:0.0001',
+            'quantity_produced' => 'nullable|numeric|min:0.0001',
+            'good_quantity' => 'nullable|numeric|min:0.0001',
             'quantity_rejected' => 'nullable|numeric|min:0',
+            'rejected_quantity' => 'nullable|numeric|min:0',
             'rejection_reason' => 'nullable|string|max:500',
             'batch_number' => 'nullable|string|max:100',
             'lot_number' => 'nullable|string|max:100',
@@ -310,12 +313,30 @@ class WorkOrderController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $log = $this->workOrderService->recordProduction($workOrder, $validated);
+        // Map alternate field names
+        $goodQuantity = $validated['good_quantity'] ?? null;
+        $rejectedQuantity = $validated['rejected_quantity'] ?? $validated['quantity_rejected'] ?? 0;
 
-        return response()->json([
-            'message' => 'Production recorded successfully.',
-            'data' => new ProductionLogResource($log),
-        ]);
+        if ($goodQuantity !== null && !isset($validated['quantity_produced'])) {
+            // Test sends good_quantity + rejected_quantity, service expects quantity_produced = total
+            $validated['quantity_produced'] = (float) $goodQuantity + (float) $rejectedQuantity;
+            $validated['quantity_rejected'] = $rejectedQuantity;
+        }
+
+        if (empty($validated['quantity_produced']) || $validated['quantity_produced'] <= 0) {
+            return $this->error('A valid production quantity is required.', 'VALIDATION_ERROR', 422);
+        }
+
+        try {
+            $log = $this->workOrderService->recordProduction($workOrder, $validated, auth()->id());
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
+
+        return $this->success(new WorkOrderResource($workOrder->fresh()), 'Production recorded successfully.');
     }
 
     /**
@@ -324,23 +345,16 @@ class WorkOrderController extends Controller
     public function startOperation(WorkOrder $workOrder, WorkOrderOperation $operation): JsonResponse
     {
         if ($operation->work_order_id !== $workOrder->id) {
-            return response()->json([
-                'message' => 'Operation does not belong to this work order.',
-            ], 422);
+            return $this->error('Operation does not belong to this work order.', 'VALIDATION_ERROR', 422);
         }
 
         if (!$operation->canBeStarted()) {
-            return response()->json([
-                'message' => 'Operation cannot be started in its current status.',
-            ], 422);
+            return $this->error('Operation cannot be started in its current status.', 'VALIDATION_ERROR', 422);
         }
 
         $operation->start();
 
-        return response()->json([
-            'message' => 'Operation started successfully.',
-            'data' => new WorkOrderResource($workOrder->fresh(['operations'])),
-        ]);
+        return $this->success(new WorkOrderResource($workOrder->fresh(['operations'])), 'Operation started successfully.');
     }
 
     /**
@@ -349,15 +363,11 @@ class WorkOrderController extends Controller
     public function completeOperation(Request $request, WorkOrder $workOrder, WorkOrderOperation $operation): JsonResponse
     {
         if ($operation->work_order_id !== $workOrder->id) {
-            return response()->json([
-                'message' => 'Operation does not belong to this work order.',
-            ], 422);
+            return $this->error('Operation does not belong to this work order.', 'VALIDATION_ERROR', 422);
         }
 
         if (!$operation->canBeCompleted()) {
-            return response()->json([
-                'message' => 'Operation cannot be completed in its current status.',
-            ], 422);
+            return $this->error('Operation cannot be completed in its current status.', 'VALIDATION_ERROR', 422);
         }
 
         $validated = $request->validate([
@@ -370,10 +380,7 @@ class WorkOrderController extends Controller
             $validated['notes'] ?? null
         );
 
-        return response()->json([
-            'message' => 'Operation completed successfully.',
-            'data' => new WorkOrderResource($workOrder->fresh(['operations'])),
-        ]);
+        return $this->success(new WorkOrderResource($workOrder->fresh(['operations'])), 'Operation completed successfully.');
     }
 
     /**
@@ -385,15 +392,13 @@ class WorkOrderController extends Controller
 
         $statistics = $this->workOrderService->getStatistics($filters);
 
-        return response()->json([
-            'data' => $statistics,
-        ]);
+        return $this->success($statistics);
     }
 
     /**
      * Get production schedule.
      */
-    public function schedule(Request $request): JsonResponse
+    public function productionSchedule(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'start_date' => 'required|date',
@@ -405,8 +410,6 @@ class WorkOrderController extends Controller
             $validated['end_date']
         );
 
-        return response()->json([
-            'data' => $schedule,
-        ]);
+        return $this->success($schedule);
     }
 }

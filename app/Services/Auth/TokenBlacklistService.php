@@ -33,7 +33,7 @@ class TokenBlacklistService
     /**
      * Blacklist a specific token
      */
-    public function blacklistToken(string $jti, ?int $userId, string $reason, int $expiresAt): void
+    public function blacklistToken(string $jti, int|string|null $userId, string $reason, int $expiresAt): void
     {
         // Add to cache for fast lookup
         $ttl = max(0, $expiresAt - time());
@@ -66,8 +66,15 @@ class TokenBlacklistService
             ->exists();
 
         if ($exists) {
-            // Repopulate cache
-            Cache::put(self::CACHE_PREFIX . $jti, true, self::CACHE_TTL);
+            // Repopulate cache using the token's actual remaining TTL
+            $record = DB::table('token_blacklist')
+                ->where('jti', $jti)
+                ->where('expires_at', '>', now())
+                ->first();
+            $ttl = $record ? max(0, strtotime($record->expires_at) - time()) : 0;
+            if ($ttl > 0) {
+                Cache::put(self::CACHE_PREFIX . $jti, true, $ttl);
+            }
         }
 
         return $exists;
@@ -76,7 +83,7 @@ class TokenBlacklistService
     /**
      * Blacklist all tokens for a user (password change, account deletion, etc.)
      */
-    public function blacklistAllUserTokens(int $userId, string $reason = 'password_change'): void
+    public function blacklistAllUserTokens(int|string $userId, string $reason = 'password_change'): void
     {
         // Record the password change timestamp
         DB::table('password_changes')->insert([
@@ -90,13 +97,15 @@ class TokenBlacklistService
     }
 
     /**
-     * Check if token was issued before a password change
+     * Check if token was issued before a password change.
+     * Returns true when a password change occurred AFTER the token was issued,
+     * meaning the token is stale and should be rejected.
      */
-    public function wasIssuedBeforePasswordChange(int $userId, int $issuedAt): bool
+    public function wasIssuedBeforePasswordChange(int|string $userId, int $issuedAt): bool
     {
         return DB::table('password_changes')
             ->where('user_id', $userId)
-            ->where('changed_at', '>', date('Y-m-d H:i:s', $issuedAt))
+            ->where('changed_at', '>=', date('Y-m-d H:i:s', $issuedAt))
             ->exists();
     }
 

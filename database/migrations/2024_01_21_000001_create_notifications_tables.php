@@ -14,8 +14,8 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->onDelete('cascade');
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->string('type', 100); // invoice.created, payment.received, stock.low, etc.
-            $table->string('title');
-            $table->text('message');
+            $table->string('title')->nullable();
+            $table->text('message')->nullable();
             $table->string('icon', 50)->nullable();
             $table->string('color', 20)->nullable();
             $table->string('action_url')->nullable(); // URL to navigate to

@@ -10,8 +10,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class ImportJob extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     public const STATUS_PENDING = 'pending';
@@ -169,7 +171,7 @@ class ImportJob extends Model
             self::ENTITY_CHART_OF_ACCOUNTS => [
                 'name' => 'Chart of Accounts',
                 'module' => 'accounting',
-                'model' => \App\Models\Accounting\ChartOfAccount::class,
+                'model' => \App\Models\Accounting\Account::class,
                 'required_fields' => ['code', 'name', 'type'],
                 'fields' => [
                     'code' => ['label' => 'Account Code', 'required' => true],

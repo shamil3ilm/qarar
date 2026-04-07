@@ -6,12 +6,14 @@ namespace App\Models\Purchase;
 
 use App\Models\Accounting\BankAccount;
 use App\Models\Accounting\JournalEntry;
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\Sales\Contact;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -19,7 +21,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PaymentMade extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasUuid, HasStateMachine, SoftDeletes;
 
     protected $table = 'payments_made';
 
@@ -67,7 +69,7 @@ class PaymentMade extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }

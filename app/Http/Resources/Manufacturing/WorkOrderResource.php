@@ -14,6 +14,7 @@ class WorkOrderResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'work_order_number' => $this->work_order_number,
 
             // BOM Reference
@@ -99,7 +100,6 @@ class WorkOrderResource extends JsonResource
             'is_active' => $this->isActive(),
 
             // Assignment
-            'assigned_to' => $this->assigned_to,
             'assigned_user' => $this->whenLoaded('assignedTo', fn() => [
                 'id' => $this->assignedTo->id,
                 'name' => $this->assignedTo->name,
@@ -141,7 +141,6 @@ class WorkOrderResource extends JsonResource
             ),
 
             // Audit
-            'created_by' => $this->created_by,
             'creator' => $this->whenLoaded('createdBy', fn() => [
                 'id' => $this->createdBy->id,
                 'name' => $this->createdBy->name,

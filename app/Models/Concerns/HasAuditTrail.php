@@ -47,24 +47,32 @@ trait HasAuditTrail
 
     protected function logAudit(string $event, ?array $oldValues, ?array $newValues): void
     {
-        // Skip if running in console without user context (e.g., seeders)
+        // Skip audit logging during console commands (seeders, scheduled jobs) without auth context
+        if (app()->runningInConsole() && !auth()->check()) {
+            return;
+        }
+
         $user = auth()->user();
 
         // Get organization_id from the model if available, otherwise from user
         $organizationId = $this->organization_id ?? $user?->organization_id;
 
-        AuditLog::create([
-            'organization_id' => $organizationId,
-            'user_id' => $user?->id,
-            'auditable_type' => static::class,
-            'auditable_id' => $this->getKey(),
-            'event' => $event,
-            'old_values' => $oldValues ? $this->filterSensitiveData($oldValues) : null,
-            'new_values' => $newValues ? $this->filterSensitiveData($newValues) : null,
-            'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent(),
-            'url' => request()->fullUrl(),
-        ]);
+        try {
+            AuditLog::create([
+                'organization_id' => $organizationId,
+                'user_id' => $user?->id,
+                'auditable_type' => static::class,
+                'auditable_id' => $this->getKey(),
+                'event' => $event,
+                'old_values' => $oldValues ? $this->filterSensitiveData($oldValues) : null,
+                'new_values' => $newValues ? $this->filterSensitiveData($newValues) : null,
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+                'url' => request()->fullUrl(),
+            ]);
+        } catch (\Throwable $e) {
+            logger()->warning('Audit log write failed', ['error' => $e->getMessage(), 'model' => static::class]);
+        }
     }
 
     protected function filterSensitiveData(array $data): array

@@ -24,9 +24,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        $data = $this->dashboardService->getAllWidgets();
-
-        return response()->json(['data' => $data]);
+        return $this->success($this->dashboardService->getAllWidgets());
     }
 
     /**
@@ -38,9 +36,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getSummaryWidget(),
-        ]);
+        return $this->success($this->dashboardService->getSummaryWidget());
     }
 
     /**
@@ -52,9 +48,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getHeadcountByDepartment(),
-        ]);
+        return $this->success($this->dashboardService->getHeadcountByDepartment());
     }
 
     /**
@@ -66,9 +60,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getHeadcountByStatus(),
-        ]);
+        return $this->success($this->dashboardService->getHeadcountByStatus());
     }
 
     /**
@@ -80,9 +72,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getAttendanceTodayWidget(),
-        ]);
+        return $this->success($this->dashboardService->getAttendanceTodayWidget());
     }
 
     /**
@@ -95,9 +85,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getAttendanceTrend((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getAttendanceTrend((int) $days));
     }
 
     /**
@@ -109,9 +97,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getLeaveSummaryWidget(),
-        ]);
+        return $this->success($this->dashboardService->getLeaveSummaryWidget());
     }
 
     /**
@@ -123,9 +109,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getPendingApprovalsWidget(),
-        ]);
+        return $this->success($this->dashboardService->getPendingApprovalsWidget());
     }
 
     /**
@@ -137,9 +121,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getPayrollSummaryWidget(),
-        ]);
+        return $this->success($this->dashboardService->getPayrollSummaryWidget());
     }
 
     /**
@@ -152,9 +134,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getUpcomingBirthdays((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getUpcomingBirthdays((int) $days));
     }
 
     /**
@@ -167,9 +147,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getWorkAnniversaries((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getWorkAnniversaries((int) $days));
     }
 
     /**
@@ -182,9 +160,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getDocumentExpiryAlerts((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getDocumentExpiryAlerts((int) $days));
     }
 
     /**
@@ -197,9 +173,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getNewJoiners((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getNewJoiners((int) $days));
     }
 
     /**
@@ -212,9 +186,7 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getRecentExits((int) $days),
-        ]);
+        return $this->success($this->dashboardService->getRecentExits((int) $days));
     }
 
     /**
@@ -226,12 +198,10 @@ class HRDashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => [
-                'gender' => $this->dashboardService->getGenderDistribution(),
-                'age' => $this->dashboardService->getAgeDistribution(),
-                'tenure' => $this->dashboardService->getTenureDistribution(),
-            ],
+        return $this->success([
+            'gender' => $this->dashboardService->getGenderDistribution(),
+            'age'    => $this->dashboardService->getAgeDistribution(),
+            'tenure' => $this->dashboardService->getTenureDistribution(),
         ]);
     }
 }

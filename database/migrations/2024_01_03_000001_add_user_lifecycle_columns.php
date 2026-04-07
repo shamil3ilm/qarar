@@ -18,21 +18,6 @@ return new class extends Migration
             $table->timestamp('roles_updated_at')->nullable()->after('deactivation_reason');
         });
 
-        // Active sessions tracking
-        Schema::create('user_sessions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->string('token_id', 64)->unique(); // JTI from JWT
-            $table->string('ip_address', 45);
-            $table->string('user_agent', 500)->nullable();
-            $table->string('device_type', 20)->nullable(); // mobile, desktop, tablet
-            $table->timestamp('last_activity_at');
-            $table->timestamp('expires_at');
-            $table->timestamp('created_at')->useCurrent();
-
-            $table->index(['user_id', 'expires_at']);
-        });
-
         // User invitations for onboarding
         Schema::create('user_invitations', function (Blueprint $table) {
             $table->id();
@@ -55,7 +40,6 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('user_invitations');
-        Schema::dropIfExists('user_sessions');
 
         Schema::table('users', function (Blueprint $table) {
             $table->dropForeign(['deactivated_by']);

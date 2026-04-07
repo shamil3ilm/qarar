@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Reports;
 
-use App\Models\Accounting\ChartOfAccount;
+use App\Models\Accounting\Account;
 use App\Models\Accounting\JournalEntryLine;
 use App\Models\Core\Organization;
 use Carbon\Carbon;
@@ -24,7 +24,7 @@ class ProfitLossReportService
         ?int $costCenterId = null,
         bool $compareLastPeriod = false
     ): ProfitLossReport {
-        $organization = Organization::find($organizationId);
+        $organization = Organization::findOrFail($organizationId);
         $start = Carbon::parse($startDate)->startOfDay();
         $end = Carbon::parse($endDate)->endOfDay();
 
@@ -169,7 +169,7 @@ class ProfitLossReportService
             $subTypes = [$subTypes];
         }
 
-        $accounts = ChartOfAccount::where('organization_id', $orgId)
+        $accounts = Account::where('organization_id', $orgId)
             ->where('type', $type)
             ->whereIn('sub_type', $subTypes)
             ->where('is_active', true)

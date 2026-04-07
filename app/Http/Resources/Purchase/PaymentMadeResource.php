@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace App\Http\Resources\Purchase;
 
 use App\Http\Resources\Sales\ContactResource;
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class PaymentMadeResource extends JsonResource
 {
+    use MasksSensitiveData;
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'payment_number' => $this->payment_number,
             'status' => $this->status,
 
@@ -32,7 +35,7 @@ class PaymentMadeResource extends JsonResource
             'bank_account' => $this->whenLoaded('bankAccount', fn() => [
                 'id' => $this->bankAccount->id,
                 'name' => $this->bankAccount->name,
-                'account_number' => $this->bankAccount->account_number,
+                'account_number' => $this->maskBankAccount($this->bankAccount->account_number),
             ]),
 
             // Currency
@@ -61,8 +64,6 @@ class PaymentMadeResource extends JsonResource
             'reference' => $this->reference,
             'notes' => $this->notes,
             'branch_id' => $this->branch_id,
-            'created_by' => $this->created_by,
-            'approved_by' => $this->approved_by,
             'approved_at' => $this->approved_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),

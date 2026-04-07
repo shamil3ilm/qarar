@@ -6,15 +6,18 @@ namespace App\Models\Core;
 
 use App\Models\User;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class Notification extends Model
 {
+    use HasFactory;
     use HasUuids;
 
     protected $fillable = [
+        'id',
         'organization_id',
         'user_id',
         'type',
@@ -37,6 +40,30 @@ class Notification extends Model
         'read_at' => 'datetime',
         'sent_at' => 'datetime',
     ];
+
+    /**
+     * Auto-populate organization_id and user_id from the notifiable when creating
+     * via Laravel's database notification channel (which calls notifications()->create()).
+     */
+    protected static function booted(): void
+    {
+        static::creating(function (self $model) {
+            if (empty($model->organization_id) && $model->notifiable_type && $model->notifiable_id) {
+                try {
+                    /** @var \Illuminate\Database\Eloquent\Model|null $notifiable */
+                    $notifiable = app($model->notifiable_type)->find($model->notifiable_id);
+                    if ($notifiable) {
+                        $model->organization_id = $notifiable->organization_id ?? null;
+                        if (empty($model->user_id) && $model->notifiable_type === User::class) {
+                            $model->user_id = $notifiable->id;
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Notification booted() failed', ['error' => $e->getMessage()]);
+                }
+            }
+        });
+    }
 
     // Notification type constants
     public const TYPE_INVOICE_CREATED = 'invoice.created';

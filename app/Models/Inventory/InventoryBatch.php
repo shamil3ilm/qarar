@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Services\Core\NumberGeneratorService;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\Models\Sales\Contact;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InventoryBatch extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, HasFactory;
 
     protected $fillable = [
         'organization_id',
@@ -32,6 +35,7 @@ class InventoryBatch extends Model
         'supplier_id',
         'grn_number',
         'metadata',
+        'batch_class_id',
     ];
 
     protected $casts = [
@@ -43,6 +47,17 @@ class InventoryBatch extends Model
         'unit_cost' => 'decimal:4',
         'metadata' => 'array',
     ];
+
+    protected static function boot(): void
+    {
+        parent::boot();
+
+        static::creating(function ($model) {
+            if (empty($model->batch_number)) {
+                $model->batch_number = app(NumberGeneratorService::class)->generate('batch');
+            }
+        });
+    }
 
     // Statuses
     public const STATUS_AVAILABLE = 'available';
@@ -72,6 +87,21 @@ class InventoryBatch extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Contact::class, 'supplier_id');
+    }
+
+    public function batchClass(): BelongsTo
+    {
+        return $this->belongsTo(BatchClass::class);
+    }
+
+    public function characteristicValues(): HasMany
+    {
+        return $this->hasMany(BatchCharacteristicValue::class);
+    }
+
+    public function whereUsedRecords(): HasMany
+    {
+        return $this->hasMany(BatchWhereUsedRecord::class);
     }
 
     // Scopes

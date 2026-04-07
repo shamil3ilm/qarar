@@ -14,6 +14,7 @@ class LeadResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'lead_number' => $this->lead_number,
             'title' => $this->title,
             'status' => $this->status,
@@ -53,7 +54,6 @@ class LeadResource extends JsonResource
             'source_details' => $this->source_details,
 
             // Assignment
-            'assigned_to' => $this->assigned_to,
             'assignee' => $this->whenLoaded('assignee', fn() => [
                 'id' => $this->assignee->id,
                 'name' => $this->assignee->name,
@@ -80,14 +80,13 @@ class LeadResource extends JsonResource
             'converted_at' => $this->converted_at?->toIso8601String(),
 
             // Activities
-            'activities' => ActivityResource::collection($this->whenLoaded('activities')),
+            'activities' => $this->whenLoaded('activities', fn () => ActivityResource::collection($this->activities)),
 
             // Metadata
             'lost_reason' => $this->lost_reason,
             'description' => $this->description,
             'notes' => $this->notes,
             'tags' => $this->tags,
-            'created_by' => $this->created_by,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

@@ -5,39 +5,44 @@ declare(strict_types=1);
 namespace App\Services\Compliance;
 
 use App\Models\Sales\Invoice;
+use App\Services\Compliance\ComplianceResult;
+use App\Services\Compliance\ZatcaInvoiceTransformer;
+use App\Traits\LogsExternalApiCalls;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Client for CompliPay - Unified Compliance Gateway.
+ * Client for ZATCA compliance integration.
  *
- * CompliPay handles all government compliance submissions:
- * - ZATCA (Saudi Arabia)
- * - FTA (UAE)
- * - GTA (Qatar)
- * - OTA (Oman)
- * - NBR (Bahrain)
- * - Kuwait Tax Authority
- * - GST/E-way Bill (India)
+ * Communicates with the ZATCA middleware project for e-invoicing
+ * compliance in Saudi Arabia (and other GCC authorities via future expansion).
  */
 class CompliPayClient
 {
+    use LogsExternalApiCalls;
+
     private string $baseUrl;
     private string $apiKey;
     private int $timeout;
     private bool $enabled;
+    private int $retryTimes;
+    private int $retrySleep;
 
     public function __construct()
     {
-        $this->baseUrl = rtrim(config('complipay.url', ''), '/');
-        $this->apiKey = config('complipay.api_key', '');
-        $this->timeout = (int) config('complipay.timeout', 30);
-        $this->enabled = (bool) config('complipay.enabled', true);
+        $this->baseUrl        = rtrim((string) config('zatca-integration.url', ''), '/');
+        $this->apiKey         = (string) config('zatca-integration.api_key', '');
+        $this->timeout        = (int) config('zatca-integration.timeout', 30);
+        $this->enabled        = (bool) config('zatca-integration.enabled', true);
+        $this->retryTimes     = (int) config('zatca-integration.retry.times', 3);
+        $this->retrySleep     = (int) config('zatca-integration.retry.sleep', 1000);
+        $this->apiServiceName = 'CompliPayClient';
     }
 
     /**
-     * Submit an invoice for compliance processing.
+     * Submit an invoice for compliance processing via the ZATCA pipeline.
      */
     public function submitInvoice(Invoice $invoice): ComplianceResult
     {
@@ -48,50 +53,92 @@ class CompliPayClient
             ]);
         }
 
-        try {
-            $payload = $this->transformInvoice($invoice);
-
-            $response = $this->client()
-                ->post('/invoices/submit', $payload);
-
-            if ($response->failed()) {
-                Log::error('CompliPay submission failed', [
-                    'invoice_id' => $invoice->id,
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-
-                return new ComplianceResult([
-                    'status' => 'rejected',
-                    'message' => $response->json('message', 'Submission failed'),
-                    'errors' => $response->json('errors', []),
-                ]);
-            }
-
-            $data = $response->json();
-
-            Log::info('CompliPay submission successful', [
+        if ($this->circuitBreaker()->isOpen('zatca')) {
+            Log::warning('CompliPayClient: circuit breaker open, skipping ZATCA submission', [
                 'invoice_id' => $invoice->id,
-                'compliance_uuid' => $data['uuid'] ?? null,
-            ]);
-
-            return new ComplianceResult($data);
-
-        } catch (\Exception $e) {
-            Log::error('CompliPay submission exception', [
-                'invoice_id' => $invoice->id,
-                'error' => $e->getMessage(),
             ]);
 
             return new ComplianceResult([
-                'status' => 'rejected',
+                'status'  => 'pending',
+                'message' => 'Circuit breaker open — ZATCA temporarily unavailable',
+            ]);
+        }
+
+        try {
+            $payload = ZatcaInvoiceTransformer::transform($invoice);
+            $url     = $this->baseUrl . '/pipeline/submit';
+
+            $response = $this->loggedApiCall(
+                'POST',
+                $url,
+                fn () => $this->client()->post('/pipeline/submit', $payload),
+                null,
+                $payload,
+            );
+
+            if ($response->failed()) {
+                Log::error('ZATCA submission failed', [
+                    'invoice_id' => $invoice->id,
+                    'status'     => $response->status(),
+                    'body'       => $response->body(),
+                ]);
+
+                return new ComplianceResult([
+                    'status'  => 'rejected',
+                    'message' => $response->json('message', 'Submission failed'),
+                    'errors'  => $response->json('errors', []),
+                ]);
+            }
+
+            $data        = $response->json();
+            $invoiceData = $data['data']['invoice'] ?? [];
+
+            Log::info('ZATCA submission successful', [
+                'invoice_id'      => $invoice->id,
+                'compliance_uuid' => $invoiceData['id'] ?? null,
+            ]);
+
+            $this->circuitBreaker()->recordSuccess('zatca');
+
+            return new ComplianceResult([
+                'status'   => $invoiceData['status'] ?? ($data['status'] ?? 'submitted'),
+                'uuid'     => $invoiceData['id'] ?? null,
+                'hash'     => $invoiceData['hash'] ?? null,
+                'qr_code'  => $invoiceData['qr_code'] ?? null,
+                'message'  => $data['message'] ?? 'Submitted successfully',
+                'response' => $data,
+            ]);
+
+        } catch (ConnectionException $e) {
+            $this->circuitBreaker()->recordFailure('zatca');
+
+            Log::error('ZATCA connection error', [
+                'invoice_id' => $invoice->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return new ComplianceResult([
+                'status'  => 'pending',
                 'message' => 'Connection error: ' . $e->getMessage(),
+            ]);
+
+        } catch (\Exception $e) {
+            $this->circuitBreaker()->recordFailure('zatca');
+
+            Log::error('ZATCA submission exception', [
+                'invoice_id' => $invoice->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            return new ComplianceResult([
+                'status'  => 'rejected',
+                'message' => 'Submission error: ' . $e->getMessage(),
             ]);
         }
     }
 
     /**
-     * Get compliance status for an invoice.
+     * Get compliance status for a submitted invoice.
      */
     public function getStatus(string $complianceUuid): ComplianceResult
     {
@@ -99,14 +146,77 @@ class CompliPayClient
             return new ComplianceResult(['status' => 'not_applicable']);
         }
 
+        if ($this->circuitBreaker()->isOpen('zatca')) {
+            Log::warning('CompliPayClient: circuit breaker open, skipping ZATCA status check', [
+                'compliance_uuid' => $complianceUuid,
+            ]);
+
+            return new ComplianceResult([
+                'status'  => 'error',
+                'message' => 'Circuit breaker open — ZATCA temporarily unavailable',
+            ]);
+        }
+
         try {
-            $response = $this->client()
-                ->get("/invoices/{$complianceUuid}/status");
+            $url      = $this->baseUrl . "/pipeline/status/{$complianceUuid}";
+            $response = $this->loggedApiCall(
+                'GET',
+                $url,
+                fn () => $this->client()->get("/pipeline/status/{$complianceUuid}"),
+            );
 
             if ($response->failed()) {
                 return new ComplianceResult([
-                    'status' => 'error',
+                    'status'  => 'error',
                     'message' => 'Failed to retrieve status',
+                ]);
+            }
+
+            $data        = $response->json();
+            $invoiceData = $data['data']['invoice'] ?? $data['data'] ?? [];
+
+            $this->circuitBreaker()->recordSuccess('zatca');
+
+            return new ComplianceResult([
+                'status'   => $invoiceData['status'] ?? ($data['status'] ?? 'unknown'),
+                'uuid'     => $invoiceData['id'] ?? $complianceUuid,
+                'hash'     => $invoiceData['hash'] ?? null,
+                'qr_code'  => $invoiceData['qr_code'] ?? null,
+                'message'  => $data['message'] ?? null,
+                'response' => $data,
+            ]);
+
+        } catch (\Exception $e) {
+            $this->circuitBreaker()->recordFailure('zatca');
+
+            return new ComplianceResult([
+                'status'  => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Validate invoice data without submitting to ZATCA.
+     */
+    public function validate(Invoice $invoice): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'valid']);
+        }
+
+        try {
+            $payload = ZatcaInvoiceTransformer::transform($invoice);
+            $payload['auto_submit'] = false;
+
+            $response = $this->client()
+                ->post('/pipeline/submit', $payload);
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'invalid',
+                    'message' => $response->json('message', 'Validation failed'),
+                    'errors' => $response->json('errors', []),
                 ]);
             }
 
@@ -131,7 +241,7 @@ class CompliPayClient
 
         try {
             $response = $this->client()
-                ->post("/invoices/{$complianceUuid}/cancel", [
+                ->post("/pipeline/{$complianceUuid}/cancel", [
                     'reason' => $reason,
                 ]);
 
@@ -153,19 +263,7 @@ class CompliPayClient
     }
 
     /**
-     * Submit a credit note.
-     */
-    public function submitCreditNote(Invoice $creditNote): ComplianceResult
-    {
-        if (!$creditNote->isCreditNote()) {
-            throw new \InvalidArgumentException('Invoice is not a credit note.');
-        }
-
-        return $this->submitInvoice($creditNote);
-    }
-
-    /**
-     * Report invoice (for Phase 2 ZATCA reporting).
+     * Report invoice (for ZATCA Phase 2 reporting).
      */
     public function reportInvoice(Invoice $invoice): ComplianceResult
     {
@@ -175,7 +273,7 @@ class CompliPayClient
 
         try {
             $response = $this->client()
-                ->post("/invoices/{$invoice->compliance_uuid}/report");
+                ->post("/pipeline/{$invoice->compliance_uuid}/report");
 
             return new ComplianceResult($response->json());
 
@@ -188,32 +286,7 @@ class CompliPayClient
     }
 
     /**
-     * Validate invoice data without submitting.
-     */
-    public function validate(Invoice $invoice): ComplianceResult
-    {
-        if (!$this->enabled) {
-            return new ComplianceResult(['status' => 'valid']);
-        }
-
-        try {
-            $payload = $this->transformInvoice($invoice);
-
-            $response = $this->client()
-                ->post('/invoices/validate', $payload);
-
-            return new ComplianceResult($response->json());
-
-        } catch (\Exception $e) {
-            return new ComplianceResult([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    /**
-     * Get QR code for invoice.
+     * Get QR code for an invoice.
      */
     public function getQrCode(string $complianceUuid): ?string
     {
@@ -223,10 +296,10 @@ class CompliPayClient
 
         try {
             $response = $this->client()
-                ->get("/invoices/{$complianceUuid}/qr-code");
+                ->get("/pipeline/{$complianceUuid}/qr-code");
 
             if ($response->successful()) {
-                return $response->json('qr_code');
+                return $response->json('qr_code') ?? $response->json('data.qr_code');
             }
 
             return null;
@@ -260,7 +333,197 @@ class CompliPayClient
     }
 
     /**
-     * Get HTTP client with authentication.
+     * Submit a credit note.
+     */
+    public function submitCreditNote(Invoice $creditNote): ComplianceResult
+    {
+        if (!$creditNote->isCreditNote()) {
+            throw new \InvalidArgumentException('Invoice is not a credit note.');
+        }
+
+        return $this->submitInvoice($creditNote);
+    }
+
+    // -----------------------------------------------------------------------
+    // Onboarding endpoints
+    // -----------------------------------------------------------------------
+
+    /**
+     * Request a Compliance CSID (CCSID) for a ZATCA branch.
+     */
+    public function requestCcsid(string $zatcaBranchId, string $otp, array $csrData): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'not_applicable']);
+        }
+
+        try {
+            $response = $this->client()
+                ->post('/onboarding/ccsid', [
+                    'branch_id' => $zatcaBranchId,
+                    'otp' => $otp,
+                    'csr' => $csrData,
+                ]);
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'error',
+                    'message' => $response->json('message', 'CCSID request failed'),
+                    'errors' => $response->json('errors', []),
+                ]);
+            }
+
+            return new ComplianceResult($response->json());
+
+        } catch (\Exception $e) {
+            return new ComplianceResult([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Run the compliance check for a ZATCA branch.
+     */
+    public function runComplianceCheck(string $zatcaBranchId): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'not_applicable']);
+        }
+
+        try {
+            $response = $this->client()
+                ->post('/onboarding/compliance-check', [
+                    'branch_id' => $zatcaBranchId,
+                ]);
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'error',
+                    'message' => $response->json('message', 'Compliance check failed'),
+                    'errors' => $response->json('errors', []),
+                ]);
+            }
+
+            return new ComplianceResult($response->json());
+
+        } catch (\Exception $e) {
+            return new ComplianceResult([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Request a Production CSID (PCSID) for a ZATCA branch.
+     */
+    public function requestPcsid(string $zatcaBranchId): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'not_applicable']);
+        }
+
+        try {
+            $response = $this->client()
+                ->post('/onboarding/pcsid', [
+                    'branch_id' => $zatcaBranchId,
+                ]);
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'error',
+                    'message' => $response->json('message', 'PCSID request failed'),
+                    'errors' => $response->json('errors', []),
+                ]);
+            }
+
+            return new ComplianceResult($response->json());
+
+        } catch (\Exception $e) {
+            return new ComplianceResult([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Get the current onboarding status for a ZATCA branch.
+     */
+    public function getOnboardingStatus(string $zatcaBranchId): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'not_applicable']);
+        }
+
+        try {
+            $response = $this->client()
+                ->get("/onboarding/status/{$zatcaBranchId}");
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'error',
+                    'message' => $response->json('message', 'Failed to retrieve onboarding status'),
+                ]);
+            }
+
+            return new ComplianceResult($response->json());
+
+        } catch (\Exception $e) {
+            return new ComplianceResult([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Register a webhook for receiving ZATCA event callbacks.
+     */
+    public function registerWebhook(string $callbackUrl, array $events, string $secret): ComplianceResult
+    {
+        if (!$this->enabled) {
+            return new ComplianceResult(['status' => 'not_applicable']);
+        }
+
+        try {
+            $response = $this->client()
+                ->post('/webhooks', [
+                    'callback_url' => $callbackUrl,
+                    'events' => $events,
+                    'secret' => $secret,
+                ]);
+
+            if ($response->failed()) {
+                return new ComplianceResult([
+                    'status' => 'error',
+                    'message' => $response->json('message', 'Webhook registration failed'),
+                    'errors' => $response->json('errors', []),
+                ]);
+            }
+
+            return new ComplianceResult($response->json());
+
+        } catch (\Exception $e) {
+            return new ComplianceResult([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Resolve the circuit breaker from the container.
+     */
+    private function circuitBreaker(): CircuitBreaker
+    {
+        return app(CircuitBreaker::class);
+    }
+
+    /**
+     * Get HTTP client with authentication and exponential-backoff retry logic.
      */
     protected function client(): PendingRequest
     {
@@ -270,134 +533,20 @@ class CompliPayClient
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
             ])
-            ->timeout($this->timeout);
-    }
-
-    /**
-     * Transform invoice to CompliPay format.
-     */
-    protected function transformInvoice(Invoice $invoice): array
-    {
-        $organization = $invoice->organization;
-        $customer = $invoice->customer;
-
-        return [
-            'country_code' => $organization->country_code,
-            'invoice_number' => $invoice->invoice_number,
-            'invoice_type' => $this->mapInvoiceType($invoice->invoice_type),
-            'invoice_date' => $invoice->invoice_date->format('Y-m-d'),
-            'due_date' => $invoice->due_date?->format('Y-m-d'),
-            'currency' => $invoice->currency_code,
-
-            'seller' => [
-                'name' => $organization->legal_name ?? $organization->name,
-                'tax_number' => $organization->tax_number,
-                'address' => [
-                    'street' => $organization->address_line_1,
-                    'city' => $organization->city,
-                    'state' => $organization->state,
-                    'postal_code' => $organization->postal_code,
-                    'country' => $organization->country_code,
-                ],
-            ],
-
-            'buyer' => [
-                'name' => $invoice->customer_name,
-                'tax_number' => $invoice->customer_tax_number,
-                'email' => $invoice->customer_email,
-                'address' => $invoice->billing_address,
-            ],
-
-            'lines' => $invoice->lines->map(fn($line) => [
-                'description' => $line->description,
-                'quantity' => (float) $line->quantity,
-                'unit_price' => (float) $line->unit_price,
-                'discount' => (float) $line->discount_amount,
-                'tax_category' => $line->tax_code ?? 'S',
-                'tax_rate' => (float) $line->tax_rate,
-                'tax_amount' => (float) $line->tax_amount,
-                'subtotal' => (float) $line->subtotal,
-                'total' => (float) $line->total,
-                'hsn_code' => $line->hsn_code,
-            ])->toArray(),
-
-            'totals' => [
-                'subtotal' => (float) $invoice->subtotal,
-                'discount' => (float) $invoice->discount_amount,
-                'tax' => (float) $invoice->tax_amount,
-                'total' => (float) $invoice->total,
-            ],
-
-            // GST specific fields
-            'gst' => $organization->tax_scheme === 'GST' ? [
-                'place_of_supply' => $invoice->place_of_supply,
-                'is_reverse_charge' => $invoice->is_reverse_charge,
-                'cgst' => $invoice->lines->sum('cgst_amount'),
-                'sgst' => $invoice->lines->sum('sgst_amount'),
-                'igst' => $invoice->lines->sum('igst_amount'),
-            ] : null,
-
-            // Reference to original invoice (for credit notes)
-            'reference_invoice' => $invoice->original_invoice_id ? [
-                'number' => $invoice->originalInvoice?->invoice_number,
-                'uuid' => $invoice->originalInvoice?->compliance_uuid,
-            ] : null,
-
-            'notes' => $invoice->notes,
-        ];
-    }
-
-    /**
-     * Map invoice type to CompliPay format.
-     */
-    protected function mapInvoiceType(string $type): string
-    {
-        return match ($type) {
-            Invoice::TYPE_STANDARD => 'standard',
-            Invoice::TYPE_SIMPLIFIED => 'simplified',
-            Invoice::TYPE_CREDIT_NOTE => 'credit_note',
-            Invoice::TYPE_DEBIT_NOTE => 'debit_note',
-            default => 'standard',
-        };
-    }
-}
-
-/**
- * Compliance submission result.
- */
-class ComplianceResult
-{
-    public string $status;
-    public ?string $uuid;
-    public ?string $hash;
-    public ?string $qrCode;
-    public ?string $message;
-    public array $errors;
-    public array $response;
-
-    public function __construct(array $data)
-    {
-        $this->status = $data['status'] ?? 'unknown';
-        $this->uuid = $data['uuid'] ?? $data['compliance_uuid'] ?? null;
-        $this->hash = $data['hash'] ?? $data['invoice_hash'] ?? null;
-        $this->qrCode = $data['qr_code'] ?? $data['qrCode'] ?? null;
-        $this->message = $data['message'] ?? null;
-        $this->errors = $data['errors'] ?? [];
-        $this->response = $data;
-    }
-
-    public function isSuccessful(): bool
-    {
-        return in_array($this->status, ['submitted', 'cleared', 'reported', 'valid'], true);
-    }
-
-    public function isRejected(): bool
-    {
-        return $this->status === 'rejected';
-    }
-
-    public function isPending(): bool
-    {
-        return $this->status === 'pending';
+            ->timeout($this->timeout)
+            ->retry(
+                $this->retryTimes,
+                function (int $attempt, \Throwable $exception): int {
+                    // Exponential backoff: 1 s, 2 s, 4 s … with ±20 % jitter
+                    $base = 1000 * (2 ** ($attempt - 1));
+                    return (int) ($base * (0.8 + lcg_value() * 0.4));
+                },
+                fn (\Throwable $exception, PendingRequest $request): bool =>
+                    $exception instanceof ConnectionException
+                    || (
+                        isset($exception->response)
+                        && in_array($exception->response->status(), [429, 500, 502, 503], true)
+                    )
+            );
     }
 }

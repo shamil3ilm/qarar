@@ -5,15 +5,17 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class StockMovement extends Model
 {
-    use BelongsToOrganization, HasUuid;
+    use BelongsToOrganization, HasAuditTrail, HasUuid, HasFactory;
 
     public const TYPE_PURCHASE = 'purchase';
     public const TYPE_SALE = 'sale';
@@ -25,6 +27,8 @@ class StockMovement extends Model
     public const TYPE_PRODUCTION_IN = 'production_in';
     public const TYPE_PRODUCTION_OUT = 'production_out';
     public const TYPE_OPENING = 'opening';
+    public const TYPE_MATERIAL_ISSUE = 'material_issue';
+    public const TYPE_MATERIAL_RETURN = 'material_return';
 
     public const DIRECTION_IN = 'in';
     public const DIRECTION_OUT = 'out';

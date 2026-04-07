@@ -93,6 +93,8 @@ return new class extends Migration
             // Position in column
             $table->unsignedInteger('position')->default(0);
 
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+
             // Metadata
             $table->json('tags')->nullable();
             $table->string('color', 7)->nullable();
@@ -255,6 +257,7 @@ return new class extends Migration
             $table->unsignedInteger('completed_points')->default(0);
             $table->timestamp('started_at')->nullable();
             $table->timestamp('completed_at')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
 
             $table->index(['board_id', 'status']);
@@ -266,7 +269,7 @@ return new class extends Migration
             $table->foreignId('sprint_id')->constrained('task_sprints')->cascadeOnDelete();
             $table->foreignId('task_id')->constrained()->cascadeOnDelete();
             $table->unsignedSmallInteger('points')->nullable();
-            $table->timestamp('added_at');
+            $table->timestamp('added_at')->nullable();
             $table->timestamps();
 
             $table->unique(['sprint_id', 'task_id']);

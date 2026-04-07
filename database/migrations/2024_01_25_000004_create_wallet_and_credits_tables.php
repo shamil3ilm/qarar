@@ -41,14 +41,14 @@ return new class extends Migration
             $table->string('description');
 
             // Source of transaction
-            $table->morphs('source'); // advance_payment, invoice, credit_note, refund, etc.
+            $table->nullableMorphs('source'); // advance_payment, invoice, credit_note, refund, etc.
 
-            $table->date('transaction_date');
-            $table->foreignId('created_by')->constrained('users')->cascadeOnDelete();
+            $table->date('transaction_date')->nullable();
+            $table->json('metadata')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->cascadeOnDelete();
             $table->timestamps();
 
             $table->index(['wallet_id', 'transaction_date']);
-            $table->index(['source_type', 'source_id']);
         });
 
         // Advance payments (prepayments)
@@ -107,8 +107,6 @@ return new class extends Migration
             $table->date('applied_date');
             $table->foreignId('applied_by')->constrained('users')->cascadeOnDelete();
             $table->timestamps();
-
-            $table->index(['applied_to_type', 'applied_to_id']);
         });
 
         // Credit notes
@@ -117,7 +115,7 @@ return new class extends Migration
             $table->uuid('uuid')->unique();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('branch_id')->nullable()->constrained()->nullOnDelete();
-            $table->string('credit_note_number', 30);
+            $table->string('credit_note_number', 30)->nullable();
             $table->string('credit_note_type', 20)->default('sales'); // sales, purchase
 
             // Reference
@@ -126,21 +124,21 @@ return new class extends Migration
 
             // Contact
             $table->foreignId('contact_id')->constrained('contacts')->cascadeOnDelete();
-            $table->string('contact_name');
+            $table->string('contact_name')->nullable();
             $table->string('contact_tax_number')->nullable();
 
             // Dates
-            $table->date('credit_note_date');
+            $table->date('credit_note_date')->nullable();
             $table->date('original_invoice_date')->nullable();
 
             // Amounts
             $table->string('currency_code', 3)->default('SAR');
             $table->decimal('exchange_rate', 10, 6)->default(1);
-            $table->decimal('subtotal', 15, 2);
+            $table->decimal('subtotal', 15, 2)->default(0);
             $table->decimal('discount_amount', 15, 2)->default(0);
             $table->decimal('tax_amount', 15, 2)->default(0);
-            $table->decimal('total', 15, 2);
-            $table->decimal('base_total', 15, 2);
+            $table->decimal('total', 15, 2)->default(0);
+            $table->decimal('base_total', 15, 2)->default(0);
             $table->decimal('applied_amount', 15, 2)->default(0);
             $table->decimal('refunded_amount', 15, 2)->default(0);
             $table->decimal('available_amount', 15, 2);
@@ -200,13 +198,13 @@ return new class extends Migration
         Schema::create('credit_note_applications', function (Blueprint $table) {
             $table->id();
             $table->foreignId('credit_note_id')->constrained()->cascadeOnDelete();
-            $table->morphs('applied_to'); // invoice, bill
-            $table->decimal('applied_amount', 15, 2);
-            $table->date('applied_date');
-            $table->foreignId('applied_by')->constrained('users')->cascadeOnDelete();
+            $table->foreignId('invoice_id')->nullable()->constrained('invoices')->nullOnDelete();
+            $table->nullableMorphs('applied_to'); // invoice, bill
+            $table->decimal('amount', 18, 4)->default(0);
+            $table->decimal('applied_amount', 15, 2)->default(0);
+            $table->date('applied_date')->nullable();
+            $table->foreignId('applied_by')->nullable()->constrained('users')->cascadeOnDelete();
             $table->timestamps();
-
-            $table->index(['applied_to_type', 'applied_to_id']);
         });
 
         // Debit notes (for supplier returns)
@@ -257,6 +255,8 @@ return new class extends Migration
             // Source
             $table->morphs('refundable'); // credit_note, advance_payment, wallet
             $table->foreignId('contact_id')->constrained('contacts')->cascadeOnDelete();
+            $table->unsignedBigInteger('sales_return_id')->nullable();
+            $table->unsignedBigInteger('payment_received_id')->nullable();
 
             // Refund details
             $table->date('refund_date');
@@ -265,15 +265,20 @@ return new class extends Migration
             $table->string('refund_method', 30); // cash, bank_transfer, original_payment_method
             $table->foreignId('bank_account_id')->nullable()->constrained('bank_accounts')->nullOnDelete();
             $table->string('reference')->nullable();
+            $table->string('transaction_reference')->nullable();
 
-            $table->string('status', 20)->default('pending'); // pending, processed, cancelled
+            $table->string('status', 20)->default('pending'); // pending, approved, processed, cancelled
             $table->text('reason')->nullable();
+            $table->text('notes')->nullable();
 
             $table->foreignId('journal_entry_id')->nullable()->constrained('journal_entries')->nullOnDelete();
+            $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('approved_at')->nullable();
             $table->foreignId('processed_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('processed_at')->nullable();
             $table->foreignId('created_by')->constrained('users')->cascadeOnDelete();
             $table->timestamps();
+            $table->softDeletes();
 
             $table->index(['organization_id', 'refund_type', 'status']);
             $table->index(['contact_id']);

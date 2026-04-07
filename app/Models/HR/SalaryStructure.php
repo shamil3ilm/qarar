@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class SalaryStructure extends Model
 {
-    use BelongsToOrganization;
+    use HasFactory, BelongsToOrganization;
 
     public const FREQUENCY_MONTHLY = 'monthly';
     public const FREQUENCY_BI_WEEKLY = 'bi_weekly';

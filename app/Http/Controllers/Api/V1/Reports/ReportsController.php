@@ -15,7 +15,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Validator;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ReportsController extends Controller
@@ -32,7 +31,7 @@ class ReportsController extends Controller
      */
     public function types(): JsonResponse
     {
-        return response()->json([
+        return $this->success([
             'data' => SavedReport::getReportTypes(),
             'schedules' => SavedReport::getScheduleOptions(),
             'formats' => SavedReport::getExportFormats(),
@@ -48,22 +47,17 @@ class ReportsController extends Controller
      */
     public function balanceSheet(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'as_of_date' => 'required|date',
             'compare_to' => 'nullable|date',
             'fiscal_year_id' => 'nullable|integer|exists:fiscal_years,id',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $user = $request->user();
         $data = $this->financialService->getBalanceSheet(
             Carbon::parse($request->get('as_of_date'))
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -71,21 +65,17 @@ class ReportsController extends Controller
      */
     public function incomeStatement(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $data = $this->financialService->getProfitAndLoss(
             Carbon::parse($request->get('start_date')),
             Carbon::parse($request->get('end_date'))
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -93,20 +83,16 @@ class ReportsController extends Controller
      */
     public function trialBalance(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'as_of_date' => 'required|date',
             'show_zero_balances' => 'nullable|boolean',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $data = $this->financialService->getTrialBalance(
             Carbon::parse($request->get('as_of_date'))
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -114,21 +100,17 @@ class ReportsController extends Controller
      */
     public function cashFlow(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $data = $this->financialService->getCashFlow(
             Carbon::parse($request->get('start_date')),
             Carbon::parse($request->get('end_date'))
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -138,7 +120,7 @@ class ReportsController extends Controller
     {
         $data = $this->financialService->getReceivableAging();
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -148,7 +130,7 @@ class ReportsController extends Controller
     {
         $data = $this->financialService->getPayableAging();
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     // ==========================================
@@ -170,7 +152,7 @@ class ReportsController extends Controller
             $request->get('valuation_method')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -178,17 +160,13 @@ class ReportsController extends Controller
      */
     public function stockMovement(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'product_id' => 'nullable|integer',
             'warehouse_id' => 'nullable|integer',
             'movement_type' => 'nullable|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -202,7 +180,7 @@ class ReportsController extends Controller
             $request->get('movement_type')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -218,7 +196,7 @@ class ReportsController extends Controller
             $request->get('warehouse_id')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -226,14 +204,10 @@ class ReportsController extends Controller
      */
     public function inventoryTurnover(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -244,7 +218,7 @@ class ReportsController extends Controller
             $request->get('end_date')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -261,7 +235,7 @@ class ReportsController extends Controller
             $request->get('warehouse_id')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     // ==========================================
@@ -273,16 +247,12 @@ class ReportsController extends Controller
      */
     public function salesByCustomer(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'customer_id' => 'nullable|integer',
             'limit' => 'nullable|integer|min:1|max:200',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -295,7 +265,7 @@ class ReportsController extends Controller
             $request->get('limit', 50)
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -303,17 +273,13 @@ class ReportsController extends Controller
      */
     public function salesByProduct(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'category_id' => 'nullable|integer',
             'product_id' => 'nullable|integer',
             'limit' => 'nullable|integer|min:1|max:200',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -327,7 +293,7 @@ class ReportsController extends Controller
             $request->get('limit', 50)
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -335,14 +301,10 @@ class ReportsController extends Controller
      */
     public function salesBySalesperson(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -353,7 +315,7 @@ class ReportsController extends Controller
             $request->get('end_date')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -361,15 +323,11 @@ class ReportsController extends Controller
      */
     public function salesTrend(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'group_by' => 'nullable|string|in:day,week,month',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -381,7 +339,7 @@ class ReportsController extends Controller
             $request->get('group_by', 'day')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -389,14 +347,10 @@ class ReportsController extends Controller
      */
     public function salesSummary(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
 
@@ -407,7 +361,7 @@ class ReportsController extends Controller
             $request->get('end_date')
         );
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     // ==========================================
@@ -419,15 +373,11 @@ class ReportsController extends Controller
      */
     public function export(Request $request): JsonResponse|BinaryFileResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'report_type' => 'required|string',
             'format' => 'required|string|in:pdf,xlsx,csv,json',
             'parameters' => 'required|array',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $user = $request->user();
         $reportType = $request->get('report_type');
@@ -438,7 +388,7 @@ class ReportsController extends Controller
         $data = $this->generateReportData($reportType, $parameters, $user);
 
         if (isset($data['error'])) {
-            return response()->json(['error' => $data['error']], 400);
+            return $this->error($data['error'], 'REPORT_ERROR', 400);
         }
 
         // Create execution record
@@ -467,16 +417,15 @@ class ReportsController extends Controller
                 )->deleteFileAfterSend(false);
             }
 
-            return response()->json([
-                'data' => [
-                    'execution_id' => $execution->id,
-                    'file_path' => $filePath,
-                    'download_url' => route('api.v1.reports.download', $execution->id),
-                    'expires_at' => $execution->expires_at?->toIso8601String(),
-                ],
+            return $this->success([
+                'execution_id' => $execution->id,
+                'file_path' => $filePath,
+                'download_url' => route('api.v1.reports.download', $execution->id),
+                'expires_at' => $execution->expires_at?->toIso8601String(),
             ]);
         } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
+            report($e);
+            return $this->serverError();
         }
     }
 
@@ -491,7 +440,7 @@ class ReportsController extends Controller
             ->findOrFail($executionId);
 
         if (!$execution->isFileAvailable()) {
-            return response()->json(['error' => 'File not available or expired'], 404);
+            return $this->notFound('File not available or expired');
         }
 
         return response()->download(
@@ -520,7 +469,7 @@ class ReportsController extends Controller
             ->orderBy('name')
             ->get();
 
-        return response()->json(['data' => $reports]);
+        return $this->success($reports);
     }
 
     /**
@@ -528,7 +477,7 @@ class ReportsController extends Controller
      */
     public function createSavedReport(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'name' => 'required|string|max:255',
             'report_type' => 'required|string',
             'parameters' => 'nullable|array',
@@ -542,16 +491,12 @@ class ReportsController extends Controller
             'is_public' => 'nullable|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $user = $request->user();
 
         $report = SavedReport::create([
             'organization_id' => $user->organization_id,
             'user_id' => $user->id,
-            ...$validator->validated(),
+            ...$validated,
         ]);
 
         if ($report->schedule_frequency) {
@@ -559,7 +504,7 @@ class ReportsController extends Controller
             $report->save();
         }
 
-        return response()->json(['data' => $report], 201);
+        return $this->created($report);
     }
 
     /**
@@ -573,7 +518,7 @@ class ReportsController extends Controller
             ->where('user_id', $user->id)
             ->findOrFail($id);
 
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'parameters' => 'nullable|array',
             'columns' => 'nullable|array',
@@ -586,18 +531,14 @@ class ReportsController extends Controller
             'is_active' => 'nullable|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $report->update($validator->validated());
+        $report->update($validated);
 
         if ($report->wasChanged('schedule_frequency') || $report->wasChanged('schedule_day')) {
             $report->next_run_at = $report->calculateNextRunAt();
             $report->save();
         }
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -613,7 +554,7 @@ class ReportsController extends Controller
 
         $report->delete();
 
-        return response()->json(['message' => 'Report deleted']);
+        return $this->success(null, 'Report deleted');
     }
 
     /**
@@ -639,7 +580,7 @@ class ReportsController extends Controller
         // Update last run
         $report->update(['last_run_at' => now()]);
 
-        return response()->json(['data' => $data]);
+        return $this->success($data);
     }
 
     /**
@@ -655,7 +596,7 @@ class ReportsController extends Controller
             ->orderByDesc('created_at')
             ->paginate($request->get('per_page', 20));
 
-        return response()->json($executions);
+        return $this->paginated($executions);
     }
 
     /**

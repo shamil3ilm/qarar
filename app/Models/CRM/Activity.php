@@ -7,6 +7,7 @@ namespace App\Models\CRM;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -14,7 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Activity extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasFactory, HasUuid, SoftDeletes;
 
     protected $table = 'crm_activities';
 

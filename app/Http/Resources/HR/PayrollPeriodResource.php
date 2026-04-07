@@ -13,6 +13,7 @@ class PayrollPeriodResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'organization_id' => $this->organization_id,
             'name' => $this->name,
             'status' => $this->status,
 
@@ -34,9 +35,7 @@ class PayrollPeriodResource extends JsonResource
             'total_payroll' => $this->getTotalPayroll(),
 
             // Processing info
-            'processed_by' => $this->processed_by,
             'processed_at' => $this->processed_at?->toIso8601String(),
-            'closed_by' => $this->closed_by,
             'closed_at' => $this->closed_at?->toIso8601String(),
 
             // Payslips

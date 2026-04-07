@@ -22,6 +22,15 @@ class ValidateJwtToken
     public function handle(Request $request, Closure $next): Response
     {
         try {
+            // Explicitly set the token from the current request to ensure
+            // the correct token is used even across consecutive requests.
+            // This handles the case where the JWTAuth singleton retains
+            // state from a previous request (e.g. in testing or queue workers).
+            $rawToken = $request->bearerToken();
+            if ($rawToken) {
+                JWTAuth::setToken($rawToken);
+            }
+
             // Parse and validate token
             $payload = JWTAuth::parseToken()->getPayload();
             $jti = $payload->get('jti');
@@ -38,8 +47,9 @@ class ValidateJwtToken
                 return $this->tokenInvalidResponse('Token invalidated due to password change');
             }
 
-            // Check if user is still active
-            $user = JWTAuth::authenticate();
+            // Resolve user directly from the token payload to avoid
+            // stale cached users from the auth guard singleton.
+            $user = \App\Models\User::find($userId);
             if (!$user) {
                 return $this->tokenInvalidResponse('User not found');
             }
@@ -51,6 +61,12 @@ class ValidateJwtToken
             if ($user->deleted_at !== null) {
                 return $this->tokenInvalidResponse('User account has been deleted');
             }
+
+            // Set the correct user on the auth guard to ensure that
+            // auth()->user() returns the right user for this request.
+            // This is necessary because the JWTGuard caches the user
+            // from the first request and may return a stale user.
+            auth()->guard('api')->setUser($user);
 
         } catch (TokenExpiredException $e) {
             return $this->tokenExpiredResponse();

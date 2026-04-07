@@ -11,38 +11,43 @@ return new class extends Migration
         // Approval workflow definitions
         Schema::create('approval_workflows', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
+            $table->uuid('uuid')->nullable()->unique();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->string('name');
-            $table->string('entity_type', 50); // invoice, purchase_order, expense, leave_request, etc.
+            $table->string('code')->nullable();
             $table->text('description')->nullable();
-            $table->json('conditions')->nullable(); // When to apply this workflow (amount > X, department = Y)
-            $table->unsignedTinyInteger('priority')->default(0); // Higher priority workflows checked first
+            $table->string('approvable_type', 100)->nullable(); // App\Models\Sales\Invoice, etc.
+            $table->decimal('min_amount', 15, 4)->nullable();
+            $table->decimal('max_amount', 15, 4)->nullable();
+            $table->json('conditions')->nullable();
+            $table->unsignedTinyInteger('priority')->default(0);
             $table->boolean('is_active')->default(true);
-            $table->boolean('is_default')->default(false);
             $table->timestamps();
 
-            $table->index(['organization_id', 'entity_type', 'is_active']);
+            $table->unique(['organization_id', 'code']);
+            $table->index(['organization_id', 'approvable_type', 'is_active'], 'approval_wf_org_approvable_active_idx');
         });
 
         // Workflow steps (approval chain)
         Schema::create('approval_workflow_steps', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('workflow_id')->constrained('approval_workflows')->cascadeOnDelete();
-            $table->unsignedTinyInteger('step_order');
+            $table->foreignId('approval_workflow_id')->constrained('approval_workflows')->cascadeOnDelete();
             $table->string('name');
+            $table->unsignedInteger('sequence')->default(1);
             $table->string('approver_type', 30); // user, role, department_head, reporting_manager, custom
-            $table->foreignId('approver_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('approver_role_id')->nullable()->constrained('roles')->nullOnDelete();
-            $table->string('approval_type', 20)->default('single'); // single, all, any (for multiple approvers)
-            $table->unsignedInteger('timeout_hours')->nullable(); // Auto-escalate after X hours
-            $table->foreignId('escalate_to_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->boolean('can_reject')->default(true);
+            $table->unsignedBigInteger('approver_id')->nullable();
+            $table->json('approver_custom')->nullable();
+            $table->string('action_type', 30)->nullable();
+            $table->json('condition')->nullable();
+            $table->json('conditions')->nullable();
+            $table->boolean('requires_all')->default(false);
+            $table->unsignedInteger('min_approvers')->default(1);
+            $table->unsignedInteger('timeout_hours')->nullable();
+            $table->boolean('can_skip')->default(false);
             $table->boolean('can_delegate')->default(false);
-            $table->boolean('requires_comment')->default(false);
             $table->timestamps();
 
-            $table->unique(['workflow_id', 'step_order']);
+            $table->index(['approval_workflow_id', 'sequence']);
         });
 
         // Approval requests
@@ -50,34 +55,38 @@ return new class extends Migration
             $table->id();
             $table->uuid('uuid')->unique();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('workflow_id')->constrained('approval_workflows')->cascadeOnDelete();
-            $table->morphs('approvable'); // Polymorphic: invoice, expense, leave_request, etc.
-            $table->foreignId('requested_by')->constrained('users')->cascadeOnDelete();
-            $table->string('status', 20)->default('pending'); // pending, approved, rejected, cancelled
-            $table->unsignedTinyInteger('current_step')->default(1);
-            $table->decimal('amount', 15, 2)->nullable(); // For amount-based routing
+            $table->foreignId('approval_workflow_id')->constrained('approval_workflows')->cascadeOnDelete();
+            $table->nullableMorphs('approvable');
+            $table->foreignId('current_step_id')->nullable()->constrained('approval_workflow_steps')->nullOnDelete();
+            $table->foreignId('submitted_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('status', 20)->default('pending');
+            $table->decimal('amount', 15, 4)->nullable();
             $table->text('notes')->nullable();
-            $table->timestamp('submitted_at');
+            $table->timestamp('submitted_at')->nullable();
             $table->timestamp('completed_at')->nullable();
             $table->timestamps();
 
             $table->index(['organization_id', 'status']);
-            $table->index(['approvable_type', 'approvable_id']);
         });
 
         // Individual approval actions
         Schema::create('approval_actions', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('request_id')->constrained('approval_requests')->cascadeOnDelete();
-            $table->foreignId('step_id')->constrained('approval_workflow_steps')->cascadeOnDelete();
-            $table->foreignId('approver_id')->constrained('users')->cascadeOnDelete();
-            $table->string('action', 20); // approved, rejected, delegated, escalated
-            $table->text('comment')->nullable();
+            $table->foreignId('approval_request_id')->constrained('approval_requests')->cascadeOnDelete();
+            $table->foreignId('workflow_step_id')->constrained('approval_workflow_steps')->cascadeOnDelete();
+            $table->foreignId('assigned_to')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('status', 20)->default('pending');
             $table->foreignId('delegated_to')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('acted_at');
+            $table->timestamp('delegated_at')->nullable();
+            $table->text('comments')->nullable();
+            $table->timestamp('action_at')->nullable();
+            $table->foreignId('action_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamp('expires_at')->nullable();
+            $table->boolean('reminder_sent')->default(false);
             $table->timestamps();
 
-            $table->index(['request_id', 'step_id']);
+            $table->index(['approval_request_id', 'workflow_step_id']);
+            $table->index(['assigned_to', 'status']);
         });
 
         // Approval delegates (temporary delegation)
@@ -88,7 +97,7 @@ return new class extends Migration
             $table->foreignId('delegate_id')->constrained('users')->cascadeOnDelete();
             $table->date('start_date');
             $table->date('end_date');
-            $table->json('entity_types')->nullable(); // Limit to specific types
+            $table->json('entity_types')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 

@@ -5,19 +5,22 @@ declare(strict_types=1);
 namespace App\Models\Sales;
 
 use App\Models\Accounting\JournalEntry;
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 class Invoice extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use HasFactory, BelongsToOrganization, HasAuditTrail, HasUuid, HasStateMachine, SoftDeletes;
 
     public const TYPE_STANDARD = 'standard';
     public const TYPE_SIMPLIFIED = 'simplified';
@@ -72,6 +75,7 @@ class Invoice extends Model
         'compliance_qr_code',
         'compliance_response',
         'compliance_submitted_at',
+        'compliance_notes',
         'place_of_supply',
         'is_reverse_charge',
         'salesperson_id',
@@ -104,7 +108,7 @@ class Invoice extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }
@@ -128,6 +132,11 @@ class Invoice extends Model
     }
 
     public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Contact::class, 'customer_id');
+    }
+
+    public function contact(): BelongsTo
     {
         return $this->belongsTo(Contact::class, 'customer_id');
     }
@@ -227,8 +236,22 @@ class Invoice extends Model
      */
     public function recalculateTotals(): void
     {
+        if (!in_array($this->status, [self::STATUS_DRAFT], true)) {
+            throw new \InvalidArgumentException(
+                "Cannot recalculate totals on invoice #{$this->invoice_number} with status '{$this->status}'."
+            );
+        }
+
         $subtotal = $this->lines()->sum('subtotal');
         $taxAmount = $this->lines()->sum('tax_amount');
+
+        // Validate discount
+        if (bccomp((string)($this->discount_value ?? 0), '0', 4) < 0) {
+            throw new \InvalidArgumentException('Discount value cannot be negative.');
+        }
+        if ($this->discount_type === 'fixed' && bccomp((string)($this->discount_value ?? 0), (string)$subtotal, 4) > 0) {
+            throw new \InvalidArgumentException('Fixed discount cannot exceed subtotal.');
+        }
 
         // Apply document-level discount
         $discountAmount = 0;
@@ -254,22 +277,34 @@ class Invoice extends Model
     /**
      * Record a payment against this invoice.
      */
-    public function recordPayment(float $amount): void
+    public function recordPayment(string|float|int $amount): void
     {
-        $newAmountPaid = bcadd((string) $this->amount_paid, (string) $amount, 4);
-        $newAmountDue = bcsub((string) $this->total, (string) $newAmountPaid, 4);
+        DB::transaction(function () use ($amount): void {
+            $invoice = static::lockForUpdate()->findOrFail($this->id);
 
-        $this->amount_paid = $newAmountPaid;
-        $this->amount_due = max(0, (float) $newAmountDue);
+            $payableStatuses = [self::STATUS_SENT, self::STATUS_PARTIAL, self::STATUS_OVERDUE];
+            if (!in_array($invoice->status, $payableStatuses, true)) {
+                throw new \InvalidArgumentException(
+                    "Cannot record payment on invoice #{$invoice->invoice_number} with status '{$invoice->status}'."
+                );
+            }
 
-        // Update status based on payment
-        if (bccomp((string) $this->amount_due, '0', 4) <= 0) {
-            $this->status = self::STATUS_PAID;
-        } elseif (bccomp((string) $this->amount_paid, '0', 4) > 0) {
-            $this->status = self::STATUS_PARTIAL;
-        }
+            $newAmountPaid = bcadd((string) $invoice->amount_paid, (string) $amount, 4);
+            $newAmountDue = bcsub((string) $invoice->total, (string) $newAmountPaid, 4);
 
-        $this->save();
+            $invoice->amount_paid = $newAmountPaid;
+            $invoice->amount_due = max(0, (float) $newAmountDue);
+            $invoice->save();
+
+            // Update status via state machine based on payment
+            if (bccomp((string) $invoice->amount_due, '0', 4) <= 0) {
+                $invoice->transitionTo(self::STATUS_PAID);
+            } elseif (bccomp((string) $invoice->amount_paid, '0', 4) > 0) {
+                $invoice->transitionTo(self::STATUS_PARTIAL);
+            }
+
+            $this->refresh();
+        });
     }
 
     /**
@@ -281,7 +316,7 @@ class Invoice extends Model
             return 0;
         }
 
-        return $this->due_date->diffInDays(now());
+        return (int) $this->due_date->diffInDays(now());
     }
 
     // Scopes

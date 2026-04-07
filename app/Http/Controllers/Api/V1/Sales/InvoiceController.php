@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Sales;
 
+use App\Http\Concerns\SupportsAgGrid;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Sales\InvoiceResource;
 use App\Models\Sales\Invoice;
@@ -11,10 +12,11 @@ use App\Services\Compliance\CompliPayClient;
 use App\Services\Sales\InvoiceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class InvoiceController extends Controller
 {
+    use SupportsAgGrid;
     public function __construct(
         private InvoiceService $invoiceService,
         private CompliPayClient $compliPayClient
@@ -23,42 +25,31 @@ class InvoiceController extends Controller
     /**
      * List invoices with filters.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = Invoice::with(['customer', 'salesperson'])
-            ->latest('invoice_date');
+            ->latest('invoice_date')
+            ->when($request->customer_id, fn($q, $id) => $q->forCustomer((int) $id))
+            ->when($request->status, fn($q, $v) => $q->where('status', $v))
+            ->when($request->type, fn($q, $v) => $q->ofType($v))
+            ->when(
+                $request->input('from_date', $request->input('start_date')),
+                fn($q, $v) => $q->where('invoice_date', '>=', $v)
+            )
+            ->when(
+                $request->input('to_date', $request->input('end_date')),
+                fn($q, $v) => $q->where('invoice_date', '<=', $v)
+            )
+            ->when($request->boolean('overdue', false), fn($q) => $q->overdue())
+            ->when($request->boolean('unpaid', false), fn($q) => $q->unpaid());
 
-        if ($request->has('customer_id')) {
-            $query->forCustomer($request->integer('customer_id'));
-        }
-
-        if ($request->has('status')) {
-            $query->where('status', $request->input('status'));
-        }
-
-        if ($request->has('type')) {
-            $query->ofType($request->input('type'));
-        }
-
-        if ($request->has('from_date')) {
-            $query->where('invoice_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('invoice_date', '<=', $request->input('to_date'));
-        }
-
-        if ($request->boolean('overdue', false)) {
-            $query->overdue();
-        }
-
-        if ($request->boolean('unpaid', false)) {
-            $query->unpaid();
+        if ($this->isAgGridRequest($request)) {
+            return $this->applyAgGrid($query, $request);
         }
 
         $invoices = $query->paginate($request->integer('per_page', 15));
 
-        return InvoiceResource::collection($invoices);
+        return $this->paginated($invoices, InvoiceResource::class);
     }
 
     /**
@@ -68,8 +59,8 @@ class InvoiceController extends Controller
     {
         $validated = $request->validate([
             'invoice_type' => 'nullable|in:standard,simplified,credit_note,debit_note',
-            'customer_id' => 'required|integer|exists:contacts,id',
-            'branch_id' => 'nullable|integer|exists:branches,id',
+            'customer_id' => ['required', 'integer', Rule::exists('contacts', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')->where('organization_id', auth()->user()->organization_id)],
             'invoice_date' => 'required|date',
             'due_date' => 'nullable|date|after_or_equal:invoice_date',
             'currency_code' => 'nullable|string|size:3',
@@ -77,13 +68,13 @@ class InvoiceController extends Controller
             'discount_type' => 'nullable|in:percentage,fixed',
             'discount_value' => 'nullable|numeric|min:0',
             'place_of_supply' => 'nullable|string|max:2',
-            'salesperson_id' => 'nullable|integer|exists:users,id',
+            'salesperson_id' => ['nullable', 'integer', Rule::exists('users', 'id')->where('organization_id', auth()->user()->organization_id)],
             'notes' => 'nullable|string|max:2000',
             'terms_and_conditions' => 'nullable|string|max:5000',
             'reference' => 'nullable|string|max:100',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'nullable|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
+            'lines.*.product_id' => ['nullable', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.description' => 'required|string|max:500',
             'lines.*.quantity' => 'required|numeric|gt:0',
             'lines.*.unit_id' => 'nullable|integer|exists:units_of_measure,id',
@@ -94,18 +85,25 @@ class InvoiceController extends Controller
             'lines.*.account_id' => 'nullable|integer|exists:chart_of_accounts,id',
             'lines.*.warehouse_id' => 'nullable|integer|exists:warehouses,id',
             'lines.*.hsn_code' => 'nullable|string|max:20',
+            'lines.*.tax_rate' => 'nullable|numeric|min:0|max:100',
+            'lines.*.cgst_rate' => 'nullable|numeric|min:0',
+            'lines.*.sgst_rate' => 'nullable|numeric|min:0',
+            'lines.*.igst_rate' => 'nullable|numeric|min:0',
         ]);
 
-        $invoice = $this->invoiceService->create(
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines']
-        );
+        try {
+            $invoice = $this->invoiceService->create(
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines']
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Invoice created successfully.',
-            'data' => new InvoiceResource($invoice),
-        ], 201);
+        return $this->created(new InvoiceResource($invoice), 'Invoice created successfully.');
     }
 
     /**
@@ -122,10 +120,7 @@ class InvoiceController extends Controller
             'paymentAllocations.payment',
         ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => new InvoiceResource($invoice),
-        ]);
+        return $this->success(new InvoiceResource($invoice));
     }
 
     /**
@@ -134,20 +129,20 @@ class InvoiceController extends Controller
     public function update(Request $request, Invoice $invoice): JsonResponse
     {
         $validated = $request->validate([
-            'version' => 'required|integer',
-            'customer_id' => 'sometimes|integer|exists:contacts,id',
+            'version' => 'nullable|integer',
+            'customer_id' => ['sometimes', 'integer', Rule::exists('contacts', 'id')->where('organization_id', auth()->user()->organization_id)],
             'invoice_date' => 'sometimes|date',
             'due_date' => 'nullable|date|after_or_equal:invoice_date',
             'discount_type' => 'nullable|in:percentage,fixed',
             'discount_value' => 'nullable|numeric|min:0',
             'place_of_supply' => 'nullable|string|max:2',
-            'salesperson_id' => 'nullable|integer|exists:users,id',
+            'salesperson_id' => ['nullable', 'integer', Rule::exists('users', 'id')->where('organization_id', auth()->user()->organization_id)],
             'notes' => 'nullable|string|max:2000',
             'terms_and_conditions' => 'nullable|string|max:5000',
             'reference' => 'nullable|string|max:100',
             'lines' => 'nullable|array|min:1',
-            'lines.*.product_id' => 'nullable|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
+            'lines.*.product_id' => ['nullable', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.description' => 'required|string|max:500',
             'lines.*.quantity' => 'required|numeric|gt:0',
             'lines.*.unit_id' => 'nullable|integer|exists:units_of_measure,id',
@@ -158,19 +153,25 @@ class InvoiceController extends Controller
             'lines.*.account_id' => 'nullable|integer|exists:chart_of_accounts,id',
             'lines.*.warehouse_id' => 'nullable|integer|exists:warehouses,id',
             'lines.*.hsn_code' => 'nullable|string|max:20',
+            'lines.*.tax_rate' => 'nullable|numeric|min:0|max:100',
         ]);
 
-        $invoice = $this->invoiceService->update(
-            $invoice,
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines'] ?? null
-        );
+        try {
+            $invoice = $this->invoiceService->update(
+                $invoice,
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines'] ?? null
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\App\Exceptions\ConcurrencyException $e) {
+            return $this->error($e->getMessage(), 'CONCURRENCY_ERROR', 409);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Invoice updated successfully.',
-            'data' => new InvoiceResource($invoice),
-        ]);
+        return $this->success(new InvoiceResource($invoice), 'Invoice updated successfully.');
     }
 
     /**
@@ -178,13 +179,16 @@ class InvoiceController extends Controller
      */
     public function send(Invoice $invoice): JsonResponse
     {
-        $invoice = $this->invoiceService->send($invoice);
+        try {
+            $invoice = $this->invoiceService->send($invoice);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Invoice sent successfully.',
-            'data' => new InvoiceResource($invoice),
-        ]);
+        return $this->success(new InvoiceResource($invoice), 'Invoice sent successfully.');
     }
 
     /**
@@ -193,16 +197,19 @@ class InvoiceController extends Controller
     public function void(Request $request, Invoice $invoice): JsonResponse
     {
         $request->validate([
-            'reason' => 'required|string|max:500',
+            'reason' => 'nullable|string|max:500',
         ]);
 
-        $invoice = $this->invoiceService->void($invoice, $request->input('reason'));
+        try {
+            $invoice = $this->invoiceService->void($invoice, $request->input('reason', ''));
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Invoice voided successfully.',
-            'data' => new InvoiceResource($invoice),
-        ]);
+        return $this->success(new InvoiceResource($invoice), 'Invoice voided successfully.');
     }
 
     /**
@@ -213,24 +220,27 @@ class InvoiceController extends Controller
         $validated = $request->validate([
             'reason' => 'nullable|string|max:500',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'nullable|integer|exists:products,id',
+            'lines.*.product_id' => ['nullable', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.description' => 'required|string|max:500',
             'lines.*.quantity' => 'required|numeric|gt:0',
             'lines.*.unit_price' => 'required|numeric|min:0',
             'lines.*.tax_category_id' => 'nullable|integer|exists:tax_categories,id',
         ]);
 
-        $creditNote = $this->invoiceService->createCreditNote(
-            $invoice,
-            $validated['lines'],
-            $validated['reason'] ?? null
-        );
+        try {
+            $creditNote = $this->invoiceService->createCreditNote(
+                $invoice,
+                $validated['lines'],
+                $validated['reason'] ?? null
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Credit note created successfully.',
-            'data' => new InvoiceResource($creditNote),
-        ], 201);
+        return $this->created(new InvoiceResource($creditNote), 'Credit note created successfully.');
     }
 
     /**
@@ -239,26 +249,29 @@ class InvoiceController extends Controller
     public function complianceStatus(Invoice $invoice): JsonResponse
     {
         if (!$invoice->compliance_uuid) {
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'status' => $invoice->compliance_status,
-                    'message' => 'Not submitted to compliance system.',
-                ],
+            return $this->success([
+                'status' => $invoice->compliance_status,
+                'message' => 'Not submitted to compliance system.',
             ]);
         }
 
-        $result = $this->compliPayClient->getStatus($invoice->compliance_uuid);
+        try {
+            $result = $this->compliPayClient->getStatus($invoice->compliance_uuid);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
+            return $this->success([
                 'status' => $result->status,
                 'uuid' => $invoice->compliance_uuid,
                 'qr_code' => $invoice->compliance_qr_code,
                 'submitted_at' => $invoice->compliance_submitted_at?->toISOString(),
-            ],
-        ]);
+            ]);
+        } catch (\Exception $e) {
+            return $this->success([
+                'status' => $invoice->compliance_status,
+                'uuid' => $invoice->compliance_uuid,
+                'qr_code' => $invoice->compliance_qr_code,
+                'submitted_at' => $invoice->compliance_submitted_at?->toISOString(),
+            ]);
+        }
     }
 
     /**
@@ -267,21 +280,12 @@ class InvoiceController extends Controller
     public function destroy(Invoice $invoice): JsonResponse
     {
         if ($invoice->status !== Invoice::STATUS_DRAFT) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Only draft invoices can be deleted.',
-                ],
-            ], 422);
+            return $this->error('Only draft invoices can be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         $invoice->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Invoice deleted successfully.',
-        ]);
+        return $this->success(null, 'Invoice deleted successfully.');
     }
 
     /**
@@ -289,15 +293,9 @@ class InvoiceController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
-        $query = Invoice::query();
-
-        if ($request->has('from_date')) {
-            $query->where('invoice_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('invoice_date', '<=', $request->input('to_date'));
-        }
+        $query = Invoice::query()
+            ->when($request->has('from_date'), fn($q) => $q->where('invoice_date', '>=', $request->input('from_date')))
+            ->when($request->has('to_date'), fn($q) => $q->where('invoice_date', '<=', $request->input('to_date')));
 
         $stats = [
             'total_invoices' => $query->count(),
@@ -312,9 +310,6 @@ class InvoiceController extends Controller
             'overdue_amount' => Invoice::overdue()->sum('amount_due'),
         ];
 
-        return response()->json([
-            'success' => true,
-            'data' => $stats,
-        ]);
+        return $this->success($stats);
     }
 }

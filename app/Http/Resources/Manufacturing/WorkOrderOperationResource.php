@@ -45,12 +45,10 @@ class WorkOrderOperationResource extends JsonResource
             'can_be_completed' => $this->canBeCompleted(),
 
             // Assignment
-            'assigned_to' => $this->assigned_to,
             'assigned_user' => $this->whenLoaded('assignedTo', fn() => [
                 'id' => $this->assignedTo->id,
                 'name' => $this->assignedTo->name,
             ]),
-            'completed_by' => $this->completed_by,
             'completed_by_user' => $this->whenLoaded('completedBy', fn() => [
                 'id' => $this->completedBy->id,
                 'name' => $this->completedBy->name,

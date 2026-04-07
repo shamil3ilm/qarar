@@ -15,19 +15,38 @@ use App\Models\Manufacturing\WorkOrder;
 use App\Models\Purchase\Bill;
 use App\Models\Purchase\PurchaseOrder;
 use App\Models\Sales\Invoice;
+use App\Services\Core\CacheService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
-class DashboardService
+class DashboardStatisticsService
 {
+    public function __construct(
+        private readonly CacheService $cache,
+    ) {}
+
     /**
      * Get comprehensive dashboard statistics.
+     * Results are cached in the transactional tier (5 min) keyed by org + date range.
      */
     public function getDashboardStats(?Carbon $startDate = null, ?Carbon $endDate = null): array
     {
         $startDate = $startDate ?? now()->startOfMonth();
-        $endDate = $endDate ?? now()->endOfMonth();
+        $endDate   = $endDate   ?? now()->endOfMonth();
 
+        $orgId    = (int) auth()->user()?->organization_id;
+        $cacheKey = 'dashboard:' . $startDate->format('Y-m-d') . ':' . $endDate->format('Y-m-d');
+
+        return $this->cache->rememberTransact($orgId, $cacheKey, function () use ($startDate, $endDate): array {
+            return $this->computeDashboardStats($startDate, $endDate);
+        });
+    }
+
+    /**
+     * Internal computation (not cached itself).
+     */
+    private function computeDashboardStats(Carbon $startDate, Carbon $endDate): array
+    {
         return [
             'period' => [
                 'start' => $startDate->format('Y-m-d'),
@@ -49,21 +68,30 @@ class DashboardService
      */
     public function getSalesStats(Carbon $startDate, Carbon $endDate): array
     {
-        $invoices = Invoice::whereBetween('invoice_date', [$startDate, $endDate]);
+        $orgId = auth()->user()?->organization_id;
+
+        $invoices = Invoice::where('organization_id', $orgId)
+            ->whereBetween('invoice_date', [$startDate, $endDate]);
 
         $totalRevenue = (clone $invoices)->whereIn('status', ['sent', 'partial', 'paid'])->sum('total');
         $paidAmount = (clone $invoices)->where('status', 'paid')->sum('total');
         $outstandingAmount = (clone $invoices)->whereIn('status', ['sent', 'partial', 'overdue'])->sum('amount_due');
-        $overdueAmount = Invoice::overdue()->sum('amount_due');
+        $overdueAmount = Invoice::where('organization_id', $orgId)->overdue()->sum('amount_due');
 
         $invoiceCount = (clone $invoices)->count();
         $paidCount = (clone $invoices)->where('status', 'paid')->count();
-        $overdueCount = Invoice::overdue()->count();
+        $overdueCount = Invoice::where('organization_id', $orgId)->overdue()->count();
 
         // Monthly trend
-        $monthlyTrend = Invoice::whereBetween('invoice_date', [$startDate->copy()->subMonths(5)->startOfMonth(), $endDate])
+        $driver = DB::connection()->getDriverName();
+        $monthExpr = $driver === 'sqlite'
+            ? "strftime('%Y-%m', invoice_date)"
+            : "DATE_FORMAT(invoice_date, '%Y-%m')";
+
+        $monthlyTrend = Invoice::where('organization_id', $orgId)
+            ->whereBetween('invoice_date', [$startDate->copy()->subMonths(5)->startOfMonth(), $endDate])
             ->whereIn('status', ['sent', 'partial', 'paid'])
-            ->selectRaw('DATE_FORMAT(invoice_date, "%Y-%m") as month, SUM(total) as total, COUNT(*) as count')
+            ->selectRaw("{$monthExpr} as month, SUM(total) as total, COUNT(*) as count")
             ->groupBy('month')
             ->orderBy('month')
             ->get()
@@ -74,7 +102,8 @@ class DashboardService
             ]);
 
         // Top customers
-        $topCustomers = Invoice::whereBetween('invoice_date', [$startDate, $endDate])
+        $topCustomers = Invoice::where('organization_id', $orgId)
+            ->whereBetween('invoice_date', [$startDate, $endDate])
             ->whereIn('status', ['sent', 'partial', 'paid'])
             ->with('customer:id,company_name,contact_name')
             ->selectRaw('customer_id, SUM(total) as total_amount, COUNT(*) as invoice_count')
@@ -108,23 +137,27 @@ class DashboardService
      */
     public function getPurchaseStats(Carbon $startDate, Carbon $endDate): array
     {
-        $bills = Bill::whereBetween('bill_date', [$startDate, $endDate]);
+        $orgId = auth()->user()?->organization_id;
+
+        $bills = Bill::where('organization_id', $orgId)
+            ->whereBetween('bill_date', [$startDate, $endDate]);
 
         $totalExpenses = (clone $bills)->whereIn('status', ['approved', 'partial', 'paid'])->sum('total');
         $paidAmount = (clone $bills)->where('status', 'paid')->sum('total');
         $payableAmount = (clone $bills)->whereIn('status', ['approved', 'partial', 'overdue'])->sum('amount_due');
-        $overdueAmount = Bill::overdue()->sum('amount_due');
+        $overdueAmount = Bill::where('organization_id', $orgId)->overdue()->sum('amount_due');
 
         $billCount = (clone $bills)->count();
-        $overdueCount = Bill::overdue()->count();
+        $overdueCount = Bill::where('organization_id', $orgId)->overdue()->count();
 
         // Purchase orders
-        $poCount = PurchaseOrder::whereBetween('order_date', [$startDate, $endDate])->count();
-        $pendingPOCount = PurchaseOrder::whereIn('status', ['draft', 'sent', 'confirmed'])->count();
-        $pendingPOValue = PurchaseOrder::whereIn('status', ['draft', 'sent', 'confirmed'])->sum('total');
+        $poCount = PurchaseOrder::where('organization_id', $orgId)->whereBetween('order_date', [$startDate, $endDate])->count();
+        $pendingPOCount = PurchaseOrder::where('organization_id', $orgId)->whereIn('status', ['draft', 'sent', 'confirmed'])->count();
+        $pendingPOValue = PurchaseOrder::where('organization_id', $orgId)->whereIn('status', ['draft', 'sent', 'confirmed'])->sum('total');
 
         // Top suppliers
-        $topSuppliers = Bill::whereBetween('bill_date', [$startDate, $endDate])
+        $topSuppliers = Bill::where('organization_id', $orgId)
+            ->whereBetween('bill_date', [$startDate, $endDate])
             ->whereIn('status', ['approved', 'partial', 'paid'])
             ->with('supplier:id,company_name,contact_name')
             ->selectRaw('supplier_id, SUM(total) as total_amount, COUNT(*) as bill_count')
@@ -158,17 +191,21 @@ class DashboardService
      */
     public function getInventoryStats(): array
     {
-        $totalProducts = Product::active()->count();
-        $lowStockCount = StockLevel::whereColumn('quantity', '<=', 'reorder_level')->count();
-        $outOfStockCount = StockLevel::where('quantity', '<=', 0)->count();
+        $orgId = auth()->user()?->organization_id;
+
+        $totalProducts = Product::where('organization_id', $orgId)->active()->count();
+        $lowStockCount = StockLevel::where('organization_id', $orgId)->whereColumn('quantity', '<=', 'reorder_level')->count();
+        $outOfStockCount = StockLevel::where('organization_id', $orgId)->where('quantity', '<=', 0)->count();
 
         // Total inventory value
-        $inventoryValue = StockLevel::selectRaw('SUM(quantity * average_cost) as total_value')
+        $inventoryValue = StockLevel::where('organization_id', $orgId)
+            ->selectRaw('SUM(quantity * average_cost) as total_value')
             ->first()
             ->total_value ?? 0;
 
         // Low stock products
-        $lowStockProducts = StockLevel::with(['product:id,sku,name', 'warehouse:id,name'])
+        $lowStockProducts = StockLevel::where('organization_id', $orgId)
+            ->with(['product:id,sku,name', 'warehouse:id,name'])
             ->whereColumn('quantity', '<=', 'reorder_level')
             ->where('quantity', '>', 0)
             ->orderBy('quantity')
@@ -184,7 +221,8 @@ class DashboardService
             ]);
 
         // Out of stock products
-        $outOfStockProducts = StockLevel::with(['product:id,sku,name', 'warehouse:id,name'])
+        $outOfStockProducts = StockLevel::where('organization_id', $orgId)
+            ->with(['product:id,sku,name', 'warehouse:id,name'])
             ->where('quantity', '<=', 0)
             ->limit(10)
             ->get()
@@ -196,7 +234,8 @@ class DashboardService
             ]);
 
         // Top products by value
-        $topProductsByValue = StockLevel::with('product:id,sku,name')
+        $topProductsByValue = StockLevel::where('organization_id', $orgId)
+            ->with('product:id,sku,name')
             ->selectRaw('product_id, SUM(quantity) as total_quantity, SUM(quantity * average_cost) as total_value')
             ->groupBy('product_id')
             ->orderByDesc('total_value')
@@ -226,36 +265,38 @@ class DashboardService
      */
     public function getHrStats(Carbon $startDate, Carbon $endDate): array
     {
-        $totalEmployees = Employee::active()->count();
-        $newHires = Employee::whereBetween('joining_date', [$startDate, $endDate])->count();
-        $terminations = Employee::whereBetween('termination_date', [$startDate, $endDate])->count();
+        $orgId = auth()->user()?->organization_id;
+
+        $totalEmployees = Employee::where('organization_id', $orgId)->active()->count();
+        $newHires = Employee::where('organization_id', $orgId)->whereBetween('joining_date', [$startDate, $endDate])->count();
+        $terminations = Employee::where('organization_id', $orgId)->whereBetween('termination_date', [$startDate, $endDate])->count();
 
         // Attendance stats for current month
-        $attendanceStats = Attendance::whereBetween('attendance_date', [$startDate, $endDate])
+        $attendanceStats = Attendance::where('organization_id', $orgId)->whereBetween('attendance_date', [$startDate, $endDate])
             ->selectRaw("
                 COUNT(*) as total_records,
                 SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present_count,
                 SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count,
                 SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) as late_count,
-                SUM(CASE WHEN is_late = 1 THEN 1 ELSE 0 END) as total_late,
-                SUM(total_overtime_minutes) as total_overtime_minutes
+                SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) as total_late,
+                COALESCE(SUM(overtime_hours), 0) as total_overtime_hours
             ")
             ->first();
 
         // Leave statistics
-        $pendingLeaves = LeaveRequest::pending()->count();
-        $approvedLeaves = LeaveRequest::approved()
+        $pendingLeaves = LeaveRequest::where('organization_id', $orgId)->pending()->count();
+        $approvedLeaves = LeaveRequest::where('organization_id', $orgId)->approved()
             ->whereBetween('start_date', [$startDate, $endDate])
             ->count();
 
         // Employees on leave today
-        $onLeaveToday = LeaveRequest::approved()
+        $onLeaveToday = LeaveRequest::where('organization_id', $orgId)->approved()
             ->where('start_date', '<=', now())
             ->where('end_date', '>=', now())
             ->count();
 
         // Department breakdown
-        $departmentStats = Employee::active()
+        $departmentStats = Employee::where('organization_id', $orgId)->active()
             ->with('department:id,name')
             ->selectRaw('department_id, COUNT(*) as count')
             ->groupBy('department_id')
@@ -275,7 +316,7 @@ class DashboardService
                 'present' => $attendanceStats->present_count ?? 0,
                 'absent' => $attendanceStats->absent_count ?? 0,
                 'late' => $attendanceStats->late_count ?? 0,
-                'overtime_hours' => round(($attendanceStats->total_overtime_minutes ?? 0) / 60, 1),
+                'overtime_hours' => round((float) ($attendanceStats->total_overtime_hours ?? 0), 1),
             ],
             'leave' => [
                 'pending_requests' => $pendingLeaves,
@@ -291,23 +332,25 @@ class DashboardService
      */
     public function getCrmStats(Carbon $startDate, Carbon $endDate): array
     {
+        $orgId = auth()->user()?->organization_id;
+
         // Leads
-        $newLeads = Lead::whereBetween('created_at', [$startDate, $endDate])->count();
-        $convertedLeads = Lead::where('status', Lead::STATUS_CONVERTED)
+        $newLeads = Lead::where('organization_id', $orgId)->whereBetween('created_at', [$startDate, $endDate])->count();
+        $convertedLeads = Lead::where('organization_id', $orgId)->where('status', Lead::STATUS_CONVERTED)
             ->whereBetween('converted_at', [$startDate, $endDate])
             ->count();
-        $qualifiedLeads = Lead::where('status', Lead::STATUS_QUALIFIED)->count();
+        $qualifiedLeads = Lead::where('organization_id', $orgId)->where('status', Lead::STATUS_QUALIFIED)->count();
 
         // Opportunities
-        $openOpportunities = Opportunity::open()->count();
-        $openValue = Opportunity::open()->sum('amount');
-        $wonOpportunities = Opportunity::where('status', Opportunity::STATUS_WON)
+        $openOpportunities = Opportunity::where('organization_id', $orgId)->open()->count();
+        $openValue = Opportunity::where('organization_id', $orgId)->open()->sum('amount');
+        $wonOpportunities = Opportunity::where('organization_id', $orgId)->where('status', Opportunity::STATUS_WON)
             ->whereBetween('actual_close_date', [$startDate, $endDate])
             ->count();
-        $wonValue = Opportunity::where('status', Opportunity::STATUS_WON)
+        $wonValue = Opportunity::where('organization_id', $orgId)->where('status', Opportunity::STATUS_WON)
             ->whereBetween('actual_close_date', [$startDate, $endDate])
             ->sum('amount');
-        $lostOpportunities = Opportunity::where('status', Opportunity::STATUS_LOST)
+        $lostOpportunities = Opportunity::where('organization_id', $orgId)->where('status', Opportunity::STATUS_LOST)
             ->whereBetween('actual_close_date', [$startDate, $endDate])
             ->count();
 
@@ -316,7 +359,7 @@ class DashboardService
         $winRate = $closedCount > 0 ? round(($wonOpportunities / $closedCount) * 100, 2) : 0;
 
         // Pipeline by stage
-        $pipelineByStage = Opportunity::open()
+        $pipelineByStage = Opportunity::where('organization_id', $orgId)->open()
             ->with('pipelineStage:id,name,color')
             ->selectRaw('pipeline_stage_id, COUNT(*) as count, SUM(amount) as total_value')
             ->groupBy('pipeline_stage_id')
@@ -330,7 +373,8 @@ class DashboardService
             ]);
 
         // Lead sources
-        $leadSources = Lead::whereBetween('created_at', [$startDate, $endDate])
+        $leadSources = Lead::where('organization_id', $orgId)
+            ->whereBetween('created_at', [$startDate, $endDate])
             ->with('leadSource:id,name')
             ->selectRaw('lead_source_id, COUNT(*) as count')
             ->groupBy('lead_source_id')
@@ -366,12 +410,14 @@ class DashboardService
      */
     public function getManufacturingStats(Carbon $startDate, Carbon $endDate): array
     {
-        $workOrders = WorkOrder::whereBetween('created_at', [$startDate, $endDate]);
+        $orgId = auth()->user()?->organization_id;
+
+        $workOrders = WorkOrder::where('organization_id', $orgId)->whereBetween('created_at', [$startDate, $endDate]);
 
         $totalWorkOrders = (clone $workOrders)->count();
-        $inProgress = WorkOrder::inProgress()->count();
+        $inProgress = WorkOrder::where('organization_id', $orgId)->inProgress()->count();
         $completed = (clone $workOrders)->completed()->count();
-        $overdue = WorkOrder::overdue()->count();
+        $overdue = WorkOrder::where('organization_id', $orgId)->overdue()->count();
 
         // Production stats
         $productionStats = (clone $workOrders)->completed()
@@ -405,7 +451,8 @@ class DashboardService
         $totalProductionCost = $totalMaterialCost + $totalLaborCost + $totalOverheadCost;
 
         // Work orders by status
-        $byStatus = WorkOrder::selectRaw('status, COUNT(*) as count')
+        $byStatus = WorkOrder::where('organization_id', $orgId)
+            ->selectRaw('status, COUNT(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status');
 
@@ -438,10 +485,13 @@ class DashboardService
      */
     public function getRecentActivity(int $limit = 20): array
     {
+        $orgId = auth()->user()?->organization_id;
+
         $activities = collect();
 
         // Recent invoices
-        $recentInvoices = Invoice::with('customer:id,company_name,contact_name')
+        $recentInvoices = Invoice::where('organization_id', $orgId)
+            ->with('customer:id,company_name,contact_name')
             ->latest()
             ->limit(5)
             ->get()
@@ -456,7 +506,8 @@ class DashboardService
             ]);
 
         // Recent work orders
-        $recentWorkOrders = WorkOrder::with('product:id,name')
+        $recentWorkOrders = WorkOrder::where('organization_id', $orgId)
+            ->with('product:id,name')
             ->latest()
             ->limit(5)
             ->get()
@@ -471,7 +522,8 @@ class DashboardService
             ]);
 
         // Recent leave requests
-        $recentLeaves = LeaveRequest::with(['employee:id,first_name,last_name', 'leaveType:id,name'])
+        $recentLeaves = LeaveRequest::where('organization_id', $orgId)
+            ->with(['employee:id,first_name,last_name', 'leaveType:id,name'])
             ->latest()
             ->limit(5)
             ->get()
@@ -500,10 +552,13 @@ class DashboardService
      */
     public function getAlerts(): array
     {
+        $orgId = auth()->user()?->organization_id;
+
         $alerts = [];
 
         // Low stock alerts
-        $lowStockCount = StockLevel::whereColumn('quantity', '<=', 'reorder_level')
+        $lowStockCount = StockLevel::where('organization_id', $orgId)
+            ->whereColumn('quantity', '<=', 'reorder_level')
             ->where('quantity', '>', 0)
             ->count();
         if ($lowStockCount > 0) {
@@ -517,7 +572,7 @@ class DashboardService
         }
 
         // Out of stock
-        $outOfStockCount = StockLevel::where('quantity', '<=', 0)->count();
+        $outOfStockCount = StockLevel::where('organization_id', $orgId)->where('quantity', '<=', 0)->count();
         if ($outOfStockCount > 0) {
             $alerts[] = [
                 'type' => 'danger',
@@ -529,7 +584,7 @@ class DashboardService
         }
 
         // Overdue invoices
-        $overdueInvoices = Invoice::overdue()->count();
+        $overdueInvoices = Invoice::where('organization_id', $orgId)->overdue()->count();
         if ($overdueInvoices > 0) {
             $alerts[] = [
                 'type' => 'warning',
@@ -541,7 +596,7 @@ class DashboardService
         }
 
         // Overdue bills
-        $overdueBills = Bill::overdue()->count();
+        $overdueBills = Bill::where('organization_id', $orgId)->overdue()->count();
         if ($overdueBills > 0) {
             $alerts[] = [
                 'type' => 'warning',
@@ -553,7 +608,7 @@ class DashboardService
         }
 
         // Pending leave requests
-        $pendingLeaves = LeaveRequest::pending()->count();
+        $pendingLeaves = LeaveRequest::where('organization_id', $orgId)->pending()->count();
         if ($pendingLeaves > 0) {
             $alerts[] = [
                 'type' => 'info',
@@ -565,7 +620,7 @@ class DashboardService
         }
 
         // Overdue work orders
-        $overdueWorkOrders = WorkOrder::overdue()->count();
+        $overdueWorkOrders = WorkOrder::where('organization_id', $orgId)->overdue()->count();
         if ($overdueWorkOrders > 0) {
             $alerts[] = [
                 'type' => 'warning',

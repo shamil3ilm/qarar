@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace App\Services\Core;
 
+use App\Models\Accounting\JournalEntry;
+use App\Models\Core\Notification;
 use App\Models\Core\RecurringProfile;
 use App\Models\Core\RecurringProfileLog;
+use App\Models\Purchase\Bill;
+use App\Models\Sales\Invoice;
+use App\Models\User;
+use App\Services\Core\NotificationService;
+use App\Services\Core\NumberGeneratorService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -13,12 +20,16 @@ use Illuminate\Support\Facades\Log;
 
 class RecurringTransactionService
 {
+    public function __construct(
+        protected readonly NotificationService $notificationService,
+    ) {}
+
     /**
      * Create a new recurring profile.
      */
-    public function createProfile(array $data): RecurringProfile
+    public function createProfile(array $data, int $userId): RecurringProfile
     {
-        return DB::transaction(function () use ($data) {
+        return DB::transaction(function () use ($data, $userId) {
             $profile = RecurringProfile::create([
                 'organization_id' => $data['organization_id'],
                 'branch_id' => $data['branch_id'] ?? null,
@@ -38,7 +49,7 @@ class RecurringTransactionService
                 'status' => RecurringProfile::STATUS_ACTIVE,
                 'notify_on_creation' => $data['notify_on_creation'] ?? true,
                 'notify_email' => $data['notify_email'] ?? null,
-                'created_by' => auth()->id(),
+                'created_by' => $userId,
             ]);
 
             $profile->calculateNextRunDate(Carbon::parse($data['start_date'])->subDay());
@@ -138,6 +149,10 @@ class RecurringTransactionService
 
         return DB::transaction(function () use ($profile, $date) {
             try {
+                // Lock the profile row to prevent concurrent processing from
+                // incrementing the occurrence counter more than once.
+                $profile = \App\Models\Core\RecurringProfile::lockForUpdate()->findOrFail($profile->id);
+
                 // Create the new document based on profile type
                 $createdDocument = $this->createDocument($profile);
 
@@ -198,6 +213,10 @@ class RecurringTransactionService
             throw new \RuntimeException("Source document not found for recurring profile {$profile->id}");
         }
 
+        if ($source->organization_id !== $profile->organization_id) {
+            throw new \RuntimeException('Source document does not belong to the same organization as the recurring profile.');
+        }
+
         return match ($profile->profile_type) {
             RecurringProfile::TYPE_INVOICE => $this->createInvoiceFromSource($source, $profile),
             RecurringProfile::TYPE_BILL => $this->createBillFromSource($source, $profile),
@@ -212,9 +231,6 @@ class RecurringTransactionService
      */
     protected function createInvoiceFromSource(Model $source, RecurringProfile $profile): Model
     {
-        // Get the Invoice model class
-        $invoiceClass = 'App\\Models\\Sales\\Invoice';
-
         // Replicate the source invoice
         $newInvoice = $source->replicate([
             'invoice_number',
@@ -234,17 +250,17 @@ class RecurringTransactionService
         // Update dates
         $newInvoice->invoice_date = today();
         $newInvoice->due_date = today()->addDays($source->payment_terms ?? 30);
-        $newInvoice->status = 'draft';
-        $newInvoice->compliance_status = 'pending';
+        $newInvoice->status = Invoice::STATUS_DRAFT;
+        $newInvoice->compliance_status = Invoice::COMPLIANCE_PENDING;
         $newInvoice->amount_paid = 0;
         $newInvoice->amount_due = $source->total;
         $newInvoice->recurring_profile_id = $profile->id;
 
         // Generate new invoice number
-        $newInvoice->invoice_number = \App\Models\Core\NumberSequence::getNext(
-            $profile->organization_id,
-            'invoice',
-            $profile->branch_id
+        $newInvoice->invoice_number = app(NumberGeneratorService::class)->generate(
+            'INV',
+            null,
+            $profile->organization_id
         );
 
         $newInvoice->save();
@@ -264,8 +280,6 @@ class RecurringTransactionService
      */
     protected function createBillFromSource(Model $source, RecurringProfile $profile): Model
     {
-        $billClass = 'App\\Models\\Purchase\\Bill';
-
         $newBill = $source->replicate([
             'bill_number',
             'status',
@@ -276,15 +290,15 @@ class RecurringTransactionService
 
         $newBill->bill_date = today();
         $newBill->due_date = today()->addDays($source->payment_terms ?? 30);
-        $newBill->status = 'draft';
+        $newBill->status = Bill::STATUS_DRAFT;
         $newBill->amount_paid = 0;
         $newBill->amount_due = $source->total;
         $newBill->recurring_profile_id = $profile->id;
 
-        $newBill->bill_number = \App\Models\Core\NumberSequence::getNext(
-            $profile->organization_id,
-            'bill',
-            $profile->branch_id
+        $newBill->bill_number = app(NumberGeneratorService::class)->generate(
+            'BILL',
+            null,
+            $profile->organization_id
         );
 
         $newBill->save();
@@ -303,8 +317,6 @@ class RecurringTransactionService
      */
     protected function createJournalFromSource(Model $source, RecurringProfile $profile): Model
     {
-        $journalClass = 'App\\Models\\Accounting\\JournalEntry';
-
         $newJournal = $source->replicate([
             'entry_number',
             'status',
@@ -313,13 +325,13 @@ class RecurringTransactionService
         ]);
 
         $newJournal->entry_date = today();
-        $newJournal->status = 'draft';
+        $newJournal->status = JournalEntry::STATUS_DRAFT;
         $newJournal->recurring_profile_id = $profile->id;
 
-        $newJournal->entry_number = \App\Models\Core\NumberSequence::getNext(
-            $profile->organization_id,
-            'journal',
-            $profile->branch_id
+        $newJournal->entry_number = app(NumberGeneratorService::class)->generate(
+            'JE',
+            null,
+            $profile->organization_id
         );
 
         $newJournal->save();
@@ -338,8 +350,6 @@ class RecurringTransactionService
      */
     protected function createExpenseFromSource(Model $source, RecurringProfile $profile): Model
     {
-        $expenseClass = 'App\\Models\\Accounting\\Expense';
-
         $newExpense = $source->replicate([
             'expense_number',
             'status',
@@ -347,13 +357,13 @@ class RecurringTransactionService
         ]);
 
         $newExpense->expense_date = today();
-        $newExpense->status = 'draft';
+        $newExpense->status = \App\Models\Expense\Expense::STATUS_DRAFT;
         $newExpense->recurring_profile_id = $profile->id;
 
-        $newExpense->expense_number = \App\Models\Core\NumberSequence::getNext(
-            $profile->organization_id,
-            'expense',
-            $profile->branch_id
+        $newExpense->expense_number = app(NumberGeneratorService::class)->generate(
+            'EXP',
+            null,
+            $profile->organization_id
         );
 
         $newExpense->save();
@@ -366,18 +376,183 @@ class RecurringTransactionService
      */
     protected function sendNotification(RecurringProfile $profile, Model $document): void
     {
-        // TODO: Implement notification sending based on profile settings
-        // Could dispatch a job or use the EmailService
+        $creator = $profile->creator;
+
+        if (!$creator) {
+            Log::warning('Cannot send recurring transaction notification: creator not found', [
+                'profile_id' => $profile->id,
+            ]);
+            return;
+        }
+
+        $documentNumber = $this->resolveDocumentNumber($document, $profile->profile_type);
+        $documentLabel  = $this->resolveDocumentLabel($profile->profile_type);
+
+        $title   = "Recurring {$documentLabel} Created";
+        $message = "{$documentLabel} {$documentNumber} has been automatically created from recurring profile \"{$profile->name}\".";
+
+        $channels = ['database'];
+
+        // If the profile has a notify_email address or creator has an email, include the email channel
+        if ($profile->notify_email || $creator->email) {
+            $channels[] = 'email';
+        }
+
+        $this->notificationService->send(
+            user: $creator,
+            type: Notification::TYPE_SYSTEM_ALERT,
+            title: $title,
+            message: $message,
+            notifiable: $document,
+            actionUrl: $this->resolveDocumentUrl($document, $profile->profile_type),
+            actionText: "View {$documentLabel}",
+            data: [
+                'profile_id'      => $profile->id,
+                'profile_name'    => $profile->name,
+                'document_type'   => $profile->profile_type,
+                'document_number' => $documentNumber,
+                'icon'            => 'refresh-cw',
+                'color'           => '#3b82f6',
+            ],
+            channels: $channels,
+        );
     }
 
     /**
-     * Auto-send/post the document.
+     * Resolve the human-readable number/reference from a generated document.
+     */
+    protected function resolveDocumentNumber(Model $document, string $profileType): string
+    {
+        return match ($profileType) {
+            RecurringProfile::TYPE_INVOICE => $document->invoice_number ?? (string) $document->id,
+            RecurringProfile::TYPE_BILL    => $document->bill_number ?? (string) $document->id,
+            RecurringProfile::TYPE_JOURNAL => $document->entry_number ?? (string) $document->id,
+            RecurringProfile::TYPE_EXPENSE => $document->expense_number ?? (string) $document->id,
+            default                        => (string) $document->id,
+        };
+    }
+
+    /**
+     * Resolve a user-friendly label for the document type.
+     */
+    protected function resolveDocumentLabel(string $profileType): string
+    {
+        return match ($profileType) {
+            RecurringProfile::TYPE_INVOICE => 'Invoice',
+            RecurringProfile::TYPE_BILL    => 'Bill',
+            RecurringProfile::TYPE_JOURNAL => 'Journal Entry',
+            RecurringProfile::TYPE_EXPENSE => 'Expense',
+            default                        => 'Document',
+        };
+    }
+
+    /**
+     * Build a front-end URL for the generated document.
+     */
+    protected function resolveDocumentUrl(mixed $document, string $profileType): string
+    {
+        if (!$document) {
+            return '#';
+        }
+
+        return match ($profileType) {
+            RecurringProfile::TYPE_INVOICE => "/sales/invoices/{$document->id}",
+            RecurringProfile::TYPE_BILL    => "/purchase/bills/{$document->id}",
+            RecurringProfile::TYPE_JOURNAL => "/accounting/journal-entries/{$document->id}",
+            RecurringProfile::TYPE_EXPENSE => "/accounting/expenses/{$document->id}",
+            default                        => "#",
+        };
+    }
+
+    /**
+     * Auto-send/post the document based on its type.
+     *
+     * Invoices are marked as sent, journal entries are posted, and bills are
+     * approved.  Expenses and unknown types are skipped with a log entry.
      */
     protected function autoSendDocument(Model $document): void
     {
-        // TODO: Implement auto-send based on document type
-        // For invoices, this might mean marking as sent
-        // For journal entries, this might mean posting
+        $documentClass = get_class($document);
+
+        try {
+            match (true) {
+                $document instanceof \App\Models\Sales\Invoice => $this->autoSendInvoice($document),
+                $document instanceof \App\Models\Accounting\JournalEntry => $this->autoPostJournalEntry($document),
+                $document instanceof \App\Models\Purchase\Bill => $this->autoApproveBill($document),
+                default => Log::warning('Auto-send not supported for document type', [
+                    'document_class' => $documentClass,
+                    'document_id'    => $document->id,
+                ]),
+            };
+        } catch (\Throwable $e) {
+            Log::error('Auto-send failed for recurring document', [
+                'document_class' => $documentClass,
+                'document_id'    => $document->id,
+                'error'          => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Mark a recurring invoice as sent.
+     */
+    protected function autoSendInvoice(Model $invoice): void
+    {
+        if (method_exists($invoice, 'send')) {
+            $invoice->send();
+            return;
+        }
+
+        // Fallback: update status directly
+        $invoice->status = Invoice::STATUS_SENT;
+        $invoice->sent_at = now();
+        $invoice->save();
+
+        Log::info('Recurring invoice auto-sent', [
+            'invoice_id'     => $invoice->id,
+            'invoice_number' => $invoice->invoice_number ?? null,
+        ]);
+    }
+
+    /**
+     * Post a recurring journal entry.
+     */
+    protected function autoPostJournalEntry(Model $journal): void
+    {
+        if (method_exists($journal, 'post')) {
+            $journal->post();
+            return;
+        }
+
+        // Fallback: update status directly
+        $journal->status = JournalEntry::STATUS_POSTED;
+        $journal->posted_at = now();
+        $journal->save();
+
+        Log::info('Recurring journal entry auto-posted', [
+            'journal_id'   => $journal->id,
+            'entry_number' => $journal->entry_number ?? null,
+        ]);
+    }
+
+    /**
+     * Approve a recurring bill so it is ready for payment.
+     */
+    protected function autoApproveBill(Model $bill): void
+    {
+        if (method_exists($bill, 'approve')) {
+            $bill->approve();
+            return;
+        }
+
+        // Fallback: update status directly
+        $bill->status = Bill::STATUS_APPROVED;
+        $bill->save();
+
+        Log::info('Recurring bill auto-approved', [
+            'bill_id'     => $bill->id,
+            'bill_number' => $bill->bill_number ?? null,
+        ]);
     }
 
     /**

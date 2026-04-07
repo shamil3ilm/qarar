@@ -127,6 +127,27 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+        'slow_queries' => [
+            'driver' => 'daily',
+            'path'   => storage_path('logs/slow-queries.log'),
+            'level'  => env('LOG_LEVEL', 'warning'),
+            'days'   => 14,
+        ],
+
+        'financial_operations' => [
+            'driver' => 'daily',
+            'path'   => storage_path('logs/financial_operations.log'),
+            'level'  => 'debug',
+            'days'   => env('LOG_FINANCIAL_DAYS', 90),
+        ],
+
+        'failed_jobs_monitor' => [
+            'driver' => 'daily',
+            'path'   => storage_path('logs/failed_jobs.log'),
+            'level'  => 'error',
+            'days'   => env('LOG_FAILED_JOBS_DAYS', 30),
+        ],
+
     ],
 
 ];

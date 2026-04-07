@@ -8,31 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Bank accounts (extend existing or create new)
-        Schema::create('bank_accounts', function (Blueprint $table) {
-            $table->id();
-            $table->uuid('uuid')->unique();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('branch_id')->nullable()->constrained()->nullOnDelete();
-            $table->foreignId('account_id')->nullable()->constrained('chart_of_accounts')->nullOnDelete();
-            $table->string('account_name');
-            $table->string('bank_name');
-            $table->string('account_number');
-            $table->string('iban')->nullable();
-            $table->string('swift_code')->nullable();
-            $table->string('currency_code', 3)->default('SAR');
-            $table->string('account_type', 20)->default('checking'); // checking, savings, credit_card
-            $table->decimal('current_balance', 15, 2)->default(0);
-            $table->decimal('bank_balance', 15, 2)->default(0); // Last known bank balance
-            $table->date('last_reconciled_date')->nullable();
-            $table->decimal('last_reconciled_balance', 15, 2)->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->boolean('is_default')->default(false);
-            $table->json('settings')->nullable(); // Bank-specific settings
-            $table->timestamps();
-
-            $table->index(['organization_id', 'is_active']);
-        });
+        // bank_accounts created in 2024_01_02_000005_create_bank_accounts_table.php
 
         // Bank transactions (imported from bank statements)
         Schema::create('bank_transactions', function (Blueprint $table) {
@@ -150,6 +126,6 @@ return new class extends Migration
         Schema::dropIfExists('bank_reconciliation_items');
         Schema::dropIfExists('bank_reconciliations');
         Schema::dropIfExists('bank_transactions');
-        Schema::dropIfExists('bank_accounts');
+        // bank_accounts dropped by 2024_01_02_000005_create_bank_accounts_table.php
     }
 };

@@ -4,16 +4,22 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Sales;
 
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class InvoiceResource extends JsonResource
 {
+    use MasksSensitiveData;
+
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
+            'branch_id' => $this->branch_id,
+            'customer_id' => $this->customer_id,
             'invoice_number' => $this->invoice_number,
             'invoice_type' => $this->invoice_type,
             'status' => $this->status,
@@ -22,12 +28,12 @@ class InvoiceResource extends JsonResource
                 'id' => $this->customer->id,
                 'name' => $this->customer->getDisplayName(),
                 'email' => $this->customer->email,
-                'tax_number' => $this->customer->tax_number,
+                'tax_number' => $this->maskTaxNumber($this->customer->tax_number),
             ]),
 
             'customer_name' => $this->customer_name,
             'customer_email' => $this->customer_email,
-            'customer_tax_number' => $this->customer_tax_number,
+            'customer_tax_number' => $this->maskTaxNumber($this->customer_tax_number),
             'billing_address' => $this->billing_address,
             'shipping_address' => $this->shipping_address,
 
@@ -54,7 +60,7 @@ class InvoiceResource extends JsonResource
                 $this->lines->map(fn($line) => [
                     'id' => $line->id,
                     'product_id' => $line->product_id,
-                    'product' => $line->product ? [
+                    'product' => $line->relationLoaded('product') && $line->product ? [
                         'id' => $line->product->id,
                         'sku' => $line->product->sku,
                         'name' => $line->product->name,
@@ -73,6 +79,8 @@ class InvoiceResource extends JsonResource
                         'code' => $line->tax_code,
                         'rate' => $line->tax_rate,
                         'amount' => $line->tax_amount,
+                        'exemption_code' => $line->tax_exemption_code,
+                        'exemption_reason' => $line->tax_exemption_reason,
                     ],
                     'gst' => ($line->cgst_amount > 0 || $line->sgst_amount > 0 || $line->igst_amount > 0) ? [
                         'hsn_code' => $line->hsn_code,

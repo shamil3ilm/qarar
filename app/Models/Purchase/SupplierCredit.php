@@ -10,8 +10,10 @@ use App\Models\Sales\Contact;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class SupplierCredit extends Model
 {
+    use HasFactory;
     use BelongsToOrganization, HasUuid;
 
     public const SOURCE_ADVANCE_PAYMENT = 'advance_payment';

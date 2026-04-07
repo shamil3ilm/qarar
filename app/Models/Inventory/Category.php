@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,7 +13,7 @@ use Illuminate\Support\Str;
 
 class Category extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, HasFactory;
 
     protected $fillable = [
         'organization_id',
@@ -110,6 +111,39 @@ class Category extends Model
         $parts[] = $this->name;
 
         return implode(' > ', $parts);
+    }
+
+    /**
+     * Get the full category path (e.g., "Electronics > Phones > Smartphones").
+     */
+    public function getFullPath(): string
+    {
+        $path = [$this->name];
+        $parent = $this->parent;
+
+        while ($parent) {
+            array_unshift($path, $parent->name);
+            $parent = $parent->parent;
+        }
+
+        return implode(' > ', $path);
+    }
+
+    /**
+     * Check if this category is an ancestor of the given category.
+     */
+    public function isAncestorOf(Category $category): bool
+    {
+        $parent = $category->parent;
+
+        while ($parent) {
+            if ($parent->id === $this->id) {
+                return true;
+            }
+            $parent = $parent->parent;
+        }
+
+        return false;
     }
 
     /**

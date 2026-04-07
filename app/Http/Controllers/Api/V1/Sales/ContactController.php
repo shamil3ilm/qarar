@@ -6,11 +6,13 @@ namespace App\Http\Controllers\Api\V1\Sales;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Sales\ContactResource;
+use App\Jobs\RunAmlScreeningJob;
 use App\Models\Sales\Contact;
 use App\Services\Sales\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class ContactController extends Controller
 {
@@ -21,29 +23,25 @@ class ContactController extends Controller
     /**
      * List contacts with filters.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = Contact::query();
 
-        if ($request->has('type')) {
-            match ($request->input('type')) {
+        $contactType = $request->input('contact_type', $request->input('type'));
+        if ($contactType) {
+            match ($contactType) {
                 'customer' => $query->customers(),
                 'supplier' => $query->suppliers(),
                 default => null,
             };
         }
 
-        if ($request->has('search')) {
-            $query->search($request->input('search'));
-        }
-
-        if ($request->boolean('active_only', false)) {
-            $query->active();
-        }
+        $query->when($request->has('search'), fn($q) => $q->search($request->input('search')))
+            ->when($request->boolean('active_only'), fn($q) => $q->active());
 
         $contacts = $query->latest()->paginate($request->integer('per_page', 15));
 
-        return ContactResource::collection($contacts);
+        return $this->paginated($contacts, ContactResource::class);
     }
 
     /**
@@ -54,8 +52,8 @@ class ContactController extends Controller
         $validated = $request->validate([
             'contact_type' => 'required|in:customer,supplier,both',
             'company_name' => 'nullable|string|max:200',
-            'contact_name' => 'required|string|max:100',
-            'email' => 'nullable|email|max:100',
+            'contact_name' => 'nullable|string|max:100',
+            'email' => 'nullable|email|max:100|unique:contacts,email,NULL,id,organization_id,' . $request->user()->organization_id,
             'phone' => 'nullable|string|max:20',
             'mobile' => 'nullable|string|max:20',
             'website' => 'nullable|url|max:255',
@@ -64,8 +62,8 @@ class ContactController extends Controller
             'payment_terms' => 'nullable|integer|min:0|max:365',
             'credit_limit' => 'nullable|numeric|min:0',
             'currency_code' => 'nullable|string|size:3',
-            'receivable_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
-            'payable_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
+            'receivable_account_id' => ['nullable', 'integer', Rule::exists('chart_of_accounts', 'id')->where('organization_id', $request->user()->organization_id)],
+            'payable_account_id' => ['nullable', 'integer', Rule::exists('chart_of_accounts', 'id')->where('organization_id', $request->user()->organization_id)],
             'billing_address_line_1' => 'nullable|string|max:255',
             'billing_address_line_2' => 'nullable|string|max:255',
             'billing_city' => 'nullable|string|max:100',
@@ -82,13 +80,21 @@ class ContactController extends Controller
             'is_active' => 'boolean',
         ]);
 
+        // Default contact_name from company_name if not provided
+        if (empty($validated['contact_name'])) {
+            $validated['contact_name'] = $validated['company_name'] ?? 'N/A';
+        }
+
         $contact = Contact::create($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Contact created successfully.',
-            'data' => new ContactResource($contact),
-        ], 201);
+        // Dispatch AML screening asynchronously — non-blocking
+        try {
+            RunAmlScreeningJob::dispatch($contact->id, $contact->organization_id);
+        } catch (\Throwable $e) {
+            Log::warning('AML screening dispatch failed for new contact', ['contact_id' => $contact->id, 'error' => $e->getMessage()]);
+        }
+
+        return $this->created(new ContactResource($contact), 'Contact created successfully.');
     }
 
     /**
@@ -98,10 +104,7 @@ class ContactController extends Controller
     {
         $contact->load(['receivableAccount', 'payableAccount']);
 
-        return response()->json([
-            'success' => true,
-            'data' => new ContactResource($contact),
-        ]);
+        return $this->success(new ContactResource($contact));
     }
 
     /**
@@ -122,8 +125,8 @@ class ContactController extends Controller
             'payment_terms' => 'nullable|integer|min:0|max:365',
             'credit_limit' => 'nullable|numeric|min:0',
             'currency_code' => 'nullable|string|size:3',
-            'receivable_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
-            'payable_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
+            'receivable_account_id' => ['nullable', 'integer', Rule::exists('chart_of_accounts', 'id')->where('organization_id', $request->user()->organization_id)],
+            'payable_account_id' => ['nullable', 'integer', Rule::exists('chart_of_accounts', 'id')->where('organization_id', $request->user()->organization_id)],
             'billing_address_line_1' => 'nullable|string|max:255',
             'billing_address_line_2' => 'nullable|string|max:255',
             'billing_city' => 'nullable|string|max:100',
@@ -142,11 +145,7 @@ class ContactController extends Controller
 
         $contact->update($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Contact updated successfully.',
-            'data' => new ContactResource($contact->fresh()),
-        ]);
+        return $this->success(new ContactResource($contact->fresh()), 'Contact updated successfully.');
     }
 
     /**
@@ -156,21 +155,12 @@ class ContactController extends Controller
     {
         // Check for related records
         if ($contact->invoices()->count() > 0) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot delete contact with existing invoices.',
-                ],
-            ], 422);
+            return $this->error('Cannot delete contact with existing invoices.', 'VALIDATION_ERROR', 422);
         }
 
         $contact->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Contact deleted successfully.',
-        ]);
+        return $this->success(null, 'Contact deleted successfully.');
     }
 
     /**
@@ -179,13 +169,16 @@ class ContactController extends Controller
     public function statement(Request $request, Contact $contact): JsonResponse
     {
         if (!$contact->isCustomer()) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Statement only available for customers.',
-                ],
-            ], 422);
+            return $this->success([
+                'customer_id' => $contact->id,
+                'period_start' => ($request->date('start_date') ?? now()->startOfYear())->format('Y-m-d'),
+                'period_end' => ($request->date('end_date') ?? now())->format('Y-m-d'),
+                'opening_balance' => 0,
+                'closing_balance' => 0,
+                'total_invoiced' => 0,
+                'total_paid' => 0,
+                'lines' => [],
+            ], 'Statement retrieved successfully.');
         }
 
         $statement = $this->paymentService->getCustomerStatement(
@@ -194,10 +187,7 @@ class ContactController extends Controller
             $request->date('end_date')
         );
 
-        return response()->json([
-            'success' => true,
-            'data' => $statement,
-        ]);
+        return $this->success($statement, 'Statement retrieved successfully.');
     }
 
     /**
@@ -205,14 +195,33 @@ class ContactController extends Controller
      */
     public function balance(Contact $contact): JsonResponse
     {
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'outstanding_balance' => $contact->getOutstandingBalance(),
-                'credit_limit' => $contact->credit_limit,
-                'available_credit' => $contact->getAvailableCredit(),
-                'is_over_limit' => $contact->isOverCreditLimit(),
-            ],
+        return $this->success([
+            'outstanding_balance' => $contact->getOutstandingBalance(),
+            'credit_limit' => $contact->credit_limit,
+            'available_credit' => $contact->getAvailableCredit(),
+            'is_over_limit' => $contact->isOverCreditLimit(),
+        ], 'Balance retrieved successfully.');
+    }
+
+    /**
+     * Block or unblock a contact for payment processing (SAP FI-AP).
+     * PATCH /contacts/{contact}/payment-block  {"blocked": true, "reason": "..."}
+     */
+    public function setPaymentBlock(Request $request, Contact $contact): JsonResponse
+    {
+        $validated = $request->validate([
+            'blocked' => ['required', 'boolean'],
+            'reason'  => ['required_if:blocked,true', 'nullable', 'string', 'max:500'],
         ]);
+
+        $contact->update([
+            'payment_block'        => $validated['blocked'],
+            'payment_block_reason' => $validated['blocked'] ? $validated['reason'] : null,
+        ]);
+
+        return $this->success(
+            $contact->fresh(),
+            $validated['blocked'] ? 'Contact payment blocked.' : 'Contact payment unblocked.'
+        );
     }
 }

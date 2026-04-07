@@ -8,13 +8,14 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class StockTransfer extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine;
+    use BelongsToOrganization, HasUuid, HasStateMachine, HasFactory;
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_IN_TRANSIT = 'in_transit';
@@ -47,7 +48,7 @@ class StockTransfer extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }

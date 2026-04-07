@@ -8,6 +8,7 @@ use App\Models\HR\Attendance;
 use App\Models\HR\Employee;
 use App\Models\HR\Holiday;
 use App\Models\HR\WorkSchedule;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class AttendanceService
@@ -23,7 +24,7 @@ class AttendanceService
         ?float $longitude = null,
         ?string $deviceId = null
     ): Attendance {
-        $checkInTime = $checkInTime ?? now();
+        $checkInTime = $checkInTime ? \Carbon\Carbon::instance($checkInTime) : now();
         $date = $checkInTime->format('Y-m-d');
 
         $attendance = Attendance::where('employee_id', $employee->id)
@@ -32,6 +33,19 @@ class AttendanceService
 
         if ($attendance && $attendance->check_in) {
             throw new \InvalidArgumentException('Already checked in for today.');
+        }
+
+        // Auto-close any open record from the previous day (missed clock-out)
+        $yesterday = $checkInTime->copy()->subDay()->format('Y-m-d');
+        $openRecord = Attendance::where('employee_id', $employee->id)
+            ->whereDate('attendance_date', $yesterday)
+            ->whereNull('check_out')
+            ->first();
+        if ($openRecord) {
+            $openRecord->update([
+                'check_out' => $openRecord->check_in->copy()->endOfDay(),
+                'notes' => 'Auto-closed: missed clock-out',
+            ]);
         }
 
         $workSchedule = $this->getWorkSchedule($employee);
@@ -138,7 +152,18 @@ class AttendanceService
         ];
 
         if ($checkIn && $checkOut) {
-            $totalMinutes = $checkIn->diff($checkOut)->i + ($checkIn->diff($checkOut)->h * 60);
+            $checkInCarbon  = Carbon::parse($checkIn);
+            $checkOutCarbon = Carbon::parse($checkOut);
+
+            if ($checkOutCarbon->lte($checkInCarbon)) {
+                throw new \InvalidArgumentException('Check-out time must be after check-in time.');
+            }
+
+            if ($checkInCarbon->isFuture()) {
+                throw new \InvalidArgumentException('Cannot record attendance for a future date.');
+            }
+
+            $totalMinutes = $checkInCarbon->diffInMinutes($checkOutCarbon);
             $data['working_hours'] = round($totalMinutes / 60, 2);
         }
 
@@ -152,13 +177,19 @@ class AttendanceService
 
     /**
      * Generate attendance for a date range (mark absences, holidays, weekends).
+     * An explicit $organizationId is required so this is safe to call from console
+     * commands where auth() is not available and global scopes may not fire.
      */
-    public function generateAttendance(\DateTimeInterface $startDate, \DateTimeInterface $endDate): int
+    public function generateAttendance(\DateTimeInterface $startDate, \DateTimeInterface $endDate, int $organizationId): int
     {
-        $employees = Employee::active()->get();
+        // Always scope to org — do not rely on global scope in console context
+        $employees = Employee::where('organization_id', $organizationId)
+            ->where('employment_status', 'active')
+            ->get();
         $count = 0;
 
-        $holidays = Holiday::whereBetween('holiday_date', [$startDate, $endDate])
+        $holidays = Holiday::where('organization_id', $organizationId)
+            ->whereBetween('holiday_date', [$startDate, $endDate])
             ->pluck('holiday_date')
             ->map(fn($d) => $d->format('Y-m-d'))
             ->toArray();

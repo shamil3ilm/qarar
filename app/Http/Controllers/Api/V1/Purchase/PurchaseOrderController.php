@@ -4,24 +4,27 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Purchase;
 
+use App\Http\Concerns\SupportsAgGrid;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Purchase\PurchaseOrderResource;
 use App\Models\Purchase\PurchaseOrder;
 use App\Services\Purchase\PurchaseOrderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class PurchaseOrderController extends Controller
 {
+    use SupportsAgGrid;
     public function __construct(
         private PurchaseOrderService $purchaseOrderService
-    ) {}
+    ) {
+    }
 
     /**
      * List purchase orders with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = PurchaseOrder::with(['supplier', 'warehouse', 'lines'])
             ->when($request->status, fn($q, $status) => $q->where('status', $status))
@@ -36,13 +39,18 @@ class PurchaseOrderController extends Controller
                         ->orWhere('reference', 'like', "%{$search}%");
                 });
             })
-            ->orderBy($request->sort_by ?? 'order_date', $request->sort_order ?? 'desc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['po_number', 'order_date', 'expected_delivery_date', 'status', 'total', 'created_at', 'updated_at'], 'order_date'),
+                $this->safeSortOrder($request->sort_order, 'desc')
+            );
 
-        $orders = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        if ($this->isAgGridRequest($request)) {
+            return $this->applyAgGrid($query, $request);
+        }
 
-        return PurchaseOrderResource::collection($orders);
+        $orders = $query->paginate($request->integer('per_page', 15));
+
+        return $this->paginated($orders, PurchaseOrderResource::class);
     }
 
     /**
@@ -51,7 +59,7 @@ class PurchaseOrderController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'supplier_id' => 'required|exists:contacts,id',
+            'supplier_id' => ['required', Rule::exists('contacts', 'id')->where('organization_id', auth()->user()->organization_id)],
             'order_number' => 'nullable|string|max:50',
             'order_date' => 'required|date',
             'expected_delivery_date' => 'nullable|date|after_or_equal:order_date',
@@ -66,37 +74,48 @@ class PurchaseOrderController extends Controller
             'terms_and_conditions' => 'nullable|string',
             'reference' => 'nullable|string|max:100',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'nullable|exists:products,id',
-            'lines.*.variant_id' => 'nullable|exists:product_variants,id',
-            'lines.*.description' => 'required|string|max:500',
+            'lines.*.product_id' => ['nullable', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.description' => 'nullable|string|max:500',
             'lines.*.quantity' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:units_of_measure,id',
             'lines.*.unit_price' => 'required|numeric|min:0',
             'lines.*.discount_type' => 'nullable|in:percentage,fixed',
             'lines.*.discount_value' => 'nullable|numeric|min:0',
+            'lines.*.tax_rate' => 'nullable|numeric|min:0',
             'lines.*.tax_category_id' => 'nullable|exists:tax_categories,id',
             'lines.*.warehouse_id' => 'nullable|exists:warehouses,id',
         ]);
 
-        $order = $this->purchaseOrderService->create(
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines']
-        );
+        // Validate supplier belongs to user's organization
+        $supplier = \App\Models\Sales\Contact::withoutGlobalScopes()->find($validated['supplier_id']);
+        if (!$supplier || $supplier->organization_id !== auth()->user()->organization_id) {
+            return $this->error('The selected supplier does not belong to your organization.', 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Purchase order created successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ], 201);
+        try {
+            $order = $this->purchaseOrderService->create(
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines']
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
+
+        return $this->created(new PurchaseOrderResource($order), 'Purchase order created successfully.');
     }
 
     /**
      * Show a specific purchase order.
      */
-    public function show(PurchaseOrder $purchaseOrder): PurchaseOrderResource
+    public function show(PurchaseOrder $purchaseOrder): JsonResponse
     {
-        return new PurchaseOrderResource(
+        return $this->success(new PurchaseOrderResource(
             $purchaseOrder->load(['supplier', 'warehouse', 'lines.product', 'lines.variant', 'lines.taxCategory', 'bills'])
-        );
+        ));
     }
 
     /**
@@ -116,28 +135,30 @@ class PurchaseOrderController extends Controller
             'reference' => 'nullable|string|max:100',
             'version' => 'sometimes|integer',
             'lines' => 'sometimes|array|min:1',
-            'lines.*.product_id' => 'nullable|exists:products,id',
-            'lines.*.variant_id' => 'nullable|exists:product_variants,id',
-            'lines.*.description' => 'required|string|max:500',
+            'lines.*.product_id' => ['nullable', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.description' => 'nullable|string|max:500',
             'lines.*.quantity' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:units_of_measure,id',
             'lines.*.unit_price' => 'required|numeric|min:0',
             'lines.*.discount_type' => 'nullable|in:percentage,fixed',
             'lines.*.discount_value' => 'nullable|numeric|min:0',
+            'lines.*.tax_rate' => 'nullable|numeric|min:0',
             'lines.*.tax_category_id' => 'nullable|exists:tax_categories,id',
             'lines.*.warehouse_id' => 'nullable|exists:warehouses,id',
         ]);
 
-        $order = $this->purchaseOrderService->update(
-            $purchaseOrder,
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines'] ?? null
-        );
+        try {
+            $order = $this->purchaseOrderService->update(
+                $purchaseOrder,
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines'] ?? null
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Purchase order updated successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ]);
+        return $this->success(new PurchaseOrderResource($order), 'Purchase order updated successfully.');
     }
 
     /**
@@ -146,17 +167,13 @@ class PurchaseOrderController extends Controller
     public function destroy(PurchaseOrder $purchaseOrder): JsonResponse
     {
         if (!$purchaseOrder->isEditable()) {
-            return response()->json([
-                'message' => 'Only draft/sent orders can be deleted.',
-            ], 422);
+            return $this->error('Only draft/sent orders can be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         $purchaseOrder->lines()->delete();
         $purchaseOrder->delete();
 
-        return response()->json([
-            'message' => 'Purchase order deleted successfully.',
-        ]);
+        return $this->success(null, 'Purchase order deleted successfully.');
     }
 
     /**
@@ -164,12 +181,13 @@ class PurchaseOrderController extends Controller
      */
     public function send(PurchaseOrder $purchaseOrder): JsonResponse
     {
-        $order = $this->purchaseOrderService->send($purchaseOrder);
+        try {
+            $order = $this->purchaseOrderService->send($purchaseOrder);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Purchase order sent successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ]);
+        return $this->success(new PurchaseOrderResource($order), 'Purchase order sent successfully.');
     }
 
     /**
@@ -177,12 +195,13 @@ class PurchaseOrderController extends Controller
      */
     public function confirm(PurchaseOrder $purchaseOrder): JsonResponse
     {
-        $order = $this->purchaseOrderService->confirm($purchaseOrder);
+        try {
+            $order = $this->purchaseOrderService->confirm($purchaseOrder, auth()->id());
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Purchase order confirmed successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ]);
+        return $this->success(new PurchaseOrderResource($order), 'Purchase order confirmed successfully.');
     }
 
     /**
@@ -194,12 +213,13 @@ class PurchaseOrderController extends Controller
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $order = $this->purchaseOrderService->cancel($purchaseOrder, $validated['reason'] ?? '');
+        try {
+            $order = $this->purchaseOrderService->cancel($purchaseOrder, $validated['reason'] ?? '');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Purchase order cancelled successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ]);
+        return $this->success(new PurchaseOrderResource($order), 'Purchase order cancelled successfully.');
     }
 
     /**
@@ -208,21 +228,37 @@ class PurchaseOrderController extends Controller
     public function receive(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $validated = $request->validate([
-            'line_quantities' => 'required|array',
-            'line_quantities.*' => 'required|numeric|min:0',
+            'line_quantities' => 'nullable|array',
+            'line_quantities.*' => 'numeric|min:0',
+            'lines' => 'nullable|array',
+            'lines.*.line_id' => 'required_with:lines|integer',
+            'lines.*.quantity_received' => 'required_with:lines|numeric|min:0',
             'warehouse_id' => 'nullable|exists:warehouses,id',
         ]);
 
-        $order = $this->purchaseOrderService->receive(
-            $purchaseOrder,
-            $validated['line_quantities'],
-            $validated['warehouse_id'] ?? null
-        );
+        // Support both formats: line_quantities (flat) and lines (array of objects)
+        $lineQuantities = $validated['line_quantities'] ?? [];
+        if (empty($lineQuantities) && !empty($validated['lines'])) {
+            foreach ($validated['lines'] as $line) {
+                $lineQuantities[$line['line_id']] = $line['quantity_received'];
+            }
+        }
 
-        return response()->json([
-            'message' => 'Items received successfully.',
-            'data' => new PurchaseOrderResource($order),
-        ]);
+        if (empty($lineQuantities)) {
+            return $this->error('Line quantities are required.', 'VALIDATION_ERROR', 422);
+        }
+
+        try {
+            $order = $this->purchaseOrderService->receive(
+                $purchaseOrder,
+                $lineQuantities,
+                $validated['warehouse_id'] ?? null
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
+
+        return $this->success(new PurchaseOrderResource($order), 'Items received successfully.');
     }
 
     /**
@@ -232,10 +268,7 @@ class PurchaseOrderController extends Controller
     {
         $newOrder = $this->purchaseOrderService->duplicate($purchaseOrder);
 
-        return response()->json([
-            'message' => 'Purchase order duplicated successfully.',
-            'data' => new PurchaseOrderResource($newOrder),
-        ], 201);
+        return $this->created(new PurchaseOrderResource($newOrder), 'Purchase order duplicated successfully.');
     }
 
     /**
@@ -247,6 +280,39 @@ class PurchaseOrderController extends Controller
             $request->supplier_id ? (int) $request->supplier_id : null
         );
 
-        return response()->json(['data' => $summary]);
+        return $this->success($summary);
+    }
+
+    /**
+     * Approve or reject a PO pending approval.
+     * POST /purchase-orders/{id}/review-approval  {"action": "approve"|"reject", "notes/reason": "..."}
+     */
+    public function reviewApproval(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        $validated = $request->validate([
+            'action' => 'required|in:approve,reject',
+            'notes'  => 'nullable|string|max:1000',
+            'reason' => 'required_if:action,reject|string|max:1000',
+        ]);
+
+        try {
+            if ($validated['action'] === 'approve') {
+                $order = $this->purchaseOrderService->approvePO(
+                    $purchaseOrder,
+                    auth()->id(),
+                    $validated['notes'] ?? null
+                );
+                return $this->success(new PurchaseOrderResource($order), 'Purchase order approved successfully.');
+            }
+
+            $order = $this->purchaseOrderService->rejectPO(
+                $purchaseOrder,
+                auth()->id(),
+                $validated['reason']
+            );
+            return $this->success(new PurchaseOrderResource($order), 'Purchase order approval rejected.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 }

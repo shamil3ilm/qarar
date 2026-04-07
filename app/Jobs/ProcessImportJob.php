@@ -8,25 +8,32 @@ use App\Models\Core\ImportJob;
 use App\Services\Core\ImportService;
 use App\Services\Core\NotificationService;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
-class ProcessImportJob implements ShouldQueue
+class ProcessImportJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 1;
+    public int $tries = 3;
+    public array $backoff = [30, 60];
     public int $timeout = 600; // 10 minutes max
 
     public function __construct(
         protected int $importJobId
     ) {}
 
+    public function uniqueId(): string
+    {
+        return (string) $this->importJobId;
+    }
+
     public function handle(ImportService $importService, NotificationService $notificationService): void
     {
-        $importJob = ImportJob::with('user')->find($this->importJobId);
+        $importJob = ImportJob::withoutGlobalScopes()->with('user')->find($this->importJobId);
 
         if (!$importJob) {
             return;
@@ -81,7 +88,7 @@ class ProcessImportJob implements ShouldQueue
 
     public function failed(\Throwable $exception): void
     {
-        $importJob = ImportJob::find($this->importJobId);
+        $importJob = ImportJob::withoutGlobalScopes()->find($this->importJobId);
 
         if ($importJob) {
             $importJob->markAsFailed($exception->getMessage());

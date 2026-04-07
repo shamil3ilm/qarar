@@ -64,7 +64,7 @@ class OpportunityService
     /**
      * Move opportunity to a different pipeline stage.
      */
-    public function moveToStage(Opportunity $opportunity, PipelineStage $stage): Opportunity
+    public function moveToStage(Opportunity $opportunity, PipelineStage $stage, int $userId): Opportunity
     {
         if ($opportunity->isClosed()) {
             throw new \InvalidArgumentException('Cannot change stage of closed opportunities.');
@@ -82,7 +82,7 @@ class OpportunityService
             'related_id' => $opportunity->id,
             'status' => Activity::STATUS_COMPLETED,
             'completed_at' => now(),
-            'created_by' => auth()->id(),
+            'created_by' => $userId,
         ]);
 
         return $opportunity->fresh();
@@ -91,13 +91,13 @@ class OpportunityService
     /**
      * Mark opportunity as won.
      */
-    public function win(Opportunity $opportunity, ?string $reason = null): Opportunity
+    public function win(Opportunity $opportunity, int $userId, ?string $reason = null): Opportunity
     {
         if ($opportunity->isClosed()) {
             throw new \InvalidArgumentException('Opportunity is already closed.');
         }
 
-        return DB::transaction(function () use ($opportunity, $reason) {
+        return DB::transaction(function () use ($opportunity, $userId, $reason) {
             // Find won stage
             $wonStage = PipelineStage::where('organization_id', $opportunity->organization_id)
                 ->where('is_won', true)
@@ -121,7 +121,7 @@ class OpportunityService
                 'related_id' => $opportunity->id,
                 'status' => Activity::STATUS_COMPLETED,
                 'completed_at' => now(),
-                'created_by' => auth()->id(),
+                'created_by' => $userId,
             ]);
 
             return $opportunity->fresh();
@@ -131,13 +131,13 @@ class OpportunityService
     /**
      * Mark opportunity as lost.
      */
-    public function lose(Opportunity $opportunity, ?string $reason = null): Opportunity
+    public function lose(Opportunity $opportunity, int $userId, ?string $reason = null): Opportunity
     {
         if ($opportunity->isClosed()) {
             throw new \InvalidArgumentException('Opportunity is already closed.');
         }
 
-        return DB::transaction(function () use ($opportunity, $reason) {
+        return DB::transaction(function () use ($opportunity, $userId, $reason) {
             // Find lost stage
             $lostStage = PipelineStage::where('organization_id', $opportunity->organization_id)
                 ->where('is_lost', true)
@@ -161,7 +161,7 @@ class OpportunityService
                 'related_id' => $opportunity->id,
                 'status' => Activity::STATUS_COMPLETED,
                 'completed_at' => now(),
-                'created_by' => auth()->id(),
+                'created_by' => $userId,
             ]);
 
             return $opportunity->fresh();
@@ -171,7 +171,7 @@ class OpportunityService
     /**
      * Reopen a closed opportunity.
      */
-    public function reopen(Opportunity $opportunity): Opportunity
+    public function reopen(Opportunity $opportunity, int $userId): Opportunity
     {
         if (!$opportunity->isClosed()) {
             throw new \InvalidArgumentException('Opportunity is not closed.');
@@ -199,7 +199,7 @@ class OpportunityService
             'related_id' => $opportunity->id,
             'status' => Activity::STATUS_COMPLETED,
             'completed_at' => now(),
-            'created_by' => auth()->id(),
+            'created_by' => $userId,
         ]);
 
         return $opportunity->fresh();
@@ -220,7 +220,10 @@ class OpportunityService
      */
     public function getPipelineSummary(): array
     {
-        $stages = PipelineStage::active()
+        $orgId = auth()->user()->organization_id;
+
+        $stages = PipelineStage::where('organization_id', $orgId)
+            ->active()
             ->ordered()
             ->withCount(['opportunities' => fn($q) => $q->open()])
             ->withSum(['opportunities' => fn($q) => $q->open()], 'amount')
@@ -243,7 +246,8 @@ class OpportunityService
      */
     public function getStatistics(?int $assignedTo = null): array
     {
-        $query = Opportunity::query();
+        $query = Opportunity::query()
+            ->where('organization_id', auth()->user()->organization_id);
 
         if ($assignedTo) {
             $query->assignedTo($assignedTo);
@@ -261,13 +265,17 @@ class OpportunityService
         $closingThisMonth = (clone $query)->closingThisMonth()->count();
         $overdue = (clone $query)->overdue()->count();
 
-        $winRate = ($won + $lost) > 0 ? round(($won / ($won + $lost)) * 100, 2) : 0;
+        $total = $won + $lost;
+        $winRate = $total > 0
+            ? bcmul(bcdiv((string) $won, (string) $total, 6), '100', 2)
+            : '0.00';
 
         // Average deal size
         $avgDealSize = $won > 0 ? $wonValue / $won : 0;
 
         // Average sales cycle (days)
-        $avgSalesCycle = Opportunity::where('status', Opportunity::STATUS_WON)
+        $avgSalesCycle = Opportunity::where('organization_id', auth()->user()->organization_id)
+            ->where('status', Opportunity::STATUS_WON)
             ->whereNotNull('actual_close_date')
             ->selectRaw('AVG(DATEDIFF(actual_close_date, created_at)) as avg_days')
             ->first()->avg_days ?? 0;
@@ -301,6 +309,7 @@ class OpportunityService
             $monthEnd = $monthStart->copy()->endOfMonth();
 
             $opportunities = Opportunity::open()
+                ->where('organization_id', auth()->user()->organization_id)
                 ->whereBetween('expected_close_date', [$monthStart, $monthEnd])
                 ->get();
 

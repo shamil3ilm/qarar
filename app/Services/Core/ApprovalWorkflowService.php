@@ -17,16 +17,16 @@ class ApprovalWorkflowService
     /**
      * Submit a document for approval.
      */
-    public function submit(Model $approvable, ?float $amount = null, ?string $notes = null): ApprovalRequest
+    public function submit(Model $approvable, int $userId, ?float $amount = null, ?string $notes = null): ApprovalRequest
     {
         // Find applicable workflow
-        $workflow = $this->findApplicableWorkflow($approvable, $amount);
+        $workflow = $this->findApplicableWorkflow($approvable, $userId, $amount);
 
         if (!$workflow) {
             throw new \InvalidArgumentException('No approval workflow configured for this document type.');
         }
 
-        return DB::transaction(function () use ($approvable, $workflow, $amount, $notes) {
+        return DB::transaction(function () use ($approvable, $workflow, $userId, $amount, $notes) {
             $firstStep = $workflow->getFirstStep();
 
             if (!$firstStep) {
@@ -44,7 +44,7 @@ class ApprovalWorkflowService
                 'amount' => $amount,
                 'notes' => $notes,
                 'submitted_at' => now(),
-                'submitted_by' => auth()->id(),
+                'submitted_by' => $userId,
             ]);
 
             // Create approval actions for first step
@@ -62,7 +62,7 @@ class ApprovalWorkflowService
     /**
      * Find applicable workflow for an approvable.
      */
-    public function findApplicableWorkflow(Model $approvable, ?float $amount = null): ?ApprovalWorkflow
+    public function findApplicableWorkflow(Model $approvable, int $userId, ?float $amount = null): ?ApprovalWorkflow
     {
         $type = get_class($approvable);
 
@@ -78,7 +78,7 @@ class ApprovalWorkflowService
         $workflows = $query->get();
 
         foreach ($workflows as $workflow) {
-            $context = $this->buildContext($approvable);
+            $context = $this->buildContext($approvable, $userId);
 
             if ($workflow->matchesConditions($context)) {
                 return $workflow;
@@ -91,10 +91,10 @@ class ApprovalWorkflowService
     /**
      * Build context for workflow condition checking.
      */
-    protected function buildContext(Model $approvable): array
+    protected function buildContext(Model $approvable, int $userId): array
     {
         $context = $approvable->toArray();
-        $context['submitted_by'] = auth()->id();
+        $context['submitted_by'] = $userId;
         $context['organization_id'] = auth()->user()?->organization_id;
 
         return $context;
@@ -142,9 +142,14 @@ class ApprovalWorkflowService
 
     /**
      * Get effective approver considering delegations.
+     * Resolves delegation chains up to a maximum depth to prevent infinite loops.
      */
-    protected function getEffectiveApprover(int $userId, ?string $approvableType = null): int
+    protected function getEffectiveApprover(int $userId, ?string $approvableType = null, int $depth = 0): int
     {
+        if ($depth > 10) {
+            throw new \RuntimeException('Delegation chain too deep (max 10)');
+        }
+
         $delegation = ApprovalDelegation::where('user_id', $userId)
             ->where('is_active', true)
             ->where('start_date', '<=', now()->toDateString())
@@ -155,28 +160,50 @@ class ApprovalWorkflowService
                         ->orWhere('approvable_type', $approvableType);
                 });
             })
+            ->lockForUpdate()
             ->first();
 
-        return $delegation ? $delegation->delegate_to : $userId;
+        if (!$delegation) {
+            return $userId;
+        }
+
+        // Recursively resolve in case the delegate also has an active delegation
+        return $this->getEffectiveApprover($delegation->delegate_to, $approvableType, $depth + 1);
     }
 
     /**
      * Approve an action.
      */
-    public function approve(ApprovalAction $action, ?string $comments = null): ApprovalRequest
+    public function approve(ApprovalAction $action, int $userId, ?string $comments = null): ApprovalRequest
     {
         if (!$action->isPending()) {
             throw new \InvalidArgumentException('Action has already been processed.');
         }
 
-        if (!$action->canActBy(auth()->id())) {
+        if (!$action->canActBy($userId)) {
             throw new \InvalidArgumentException('You are not authorized to approve this action.');
         }
 
-        return DB::transaction(function () use ($action, $comments) {
+        return DB::transaction(function () use ($action, $userId, $comments) {
+            // Lock the action row first to prevent two concurrent approvals
+            // from both passing the isPending() check simultaneously.
+            $action = ApprovalAction::lockForUpdate()->findOrFail($action->id);
+
+            if (!$action->isPending()) {
+                throw new \InvalidArgumentException('Action has already been processed.');
+            }
+
+            // Lock the request row to prevent concurrent approvals from both
+            // triggering advanceToNextStep() simultaneously.
+            $request = ApprovalRequest::lockForUpdate()->findOrFail($action->approval_request_id);
+
+            if ($request->submitted_by === $userId) {
+                throw new \App\Exceptions\ApiException('You cannot approve your own request.');
+            }
+
             $action->approve($comments);
 
-            $request = $action->request;
+            // Reload fresh counts after locking
             $step = $action->step;
 
             // Check if step is complete
@@ -191,13 +218,13 @@ class ApprovalWorkflowService
     /**
      * Reject an action.
      */
-    public function reject(ApprovalAction $action, ?string $comments = null): ApprovalRequest
+    public function reject(ApprovalAction $action, int $userId, ?string $comments = null): ApprovalRequest
     {
         if (!$action->isPending()) {
             throw new \InvalidArgumentException('Action has already been processed.');
         }
 
-        if (!$action->canActBy(auth()->id())) {
+        if (!$action->canActBy($userId)) {
             throw new \InvalidArgumentException('You are not authorized to reject this action.');
         }
 
@@ -311,7 +338,31 @@ class ApprovalWorkflowService
             throw new \InvalidArgumentException('This step does not allow delegation.');
         }
 
+        // Verify the delegatee is a valid approver for this step
+        $validApprovers = $action->step->getApprovers([
+            'submitted_by' => $action->request->submitted_by,
+            'approvable'   => $action->request->approvable,
+        ]);
+
+        if (!empty($validApprovers) && !in_array($delegateTo, $validApprovers, true)) {
+            throw new \App\Exceptions\ApiException('The selected delegate does not have approval permissions for this workflow step.');
+        }
+
+        $delegateeId = $delegateTo;
         $action->delegate($delegateTo);
+
+        DB::table('activity_logs')->insert([
+            'uuid'          => (string) \Illuminate\Support\Str::uuid(),
+            'organization_id' => auth()->user()?->organization_id,
+            'user_id'       => auth()->id(),
+            'action'        => 'approval_delegated',
+            'entity_type'   => 'approval_action',
+            'entity_id'     => (string) $action->id,
+            'description'   => "Approval delegated to user {$delegateeId}",
+            'module'        => 'core',
+            'severity'      => 'info',
+            'created_at'    => now(),
+        ]);
 
         return $action->fresh(['delegatedTo']);
     }

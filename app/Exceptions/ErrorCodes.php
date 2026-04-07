@@ -285,6 +285,19 @@ class ErrorCodes
         'http_status' => 400,
     ];
 
+    // Purchase (3800-3899)
+    public const PURCH_THREE_WAY_MATCH_FAILED = [
+        'code' => 'PURCH_3801',
+        'message' => 'Bill cannot be approved: 3-way match validation failed. Ensure a matching Goods Receipt exists and quantities/prices align with the Purchase Order.',
+        'http_status' => 400,
+    ];
+
+    public const PURCH_TDS_SECTION_NOT_CONFIGURED = [
+        'code' => 'PURCH_3802',
+        'message' => 'TDS section code is required for TDS-applicable vendors.',
+        'http_status' => 400,
+    ];
+
     // Approval (3400-3499)
     public const APPROVAL_ALREADY_PROCESSED = [
         'code' => 'APPR_3401',
@@ -326,6 +339,74 @@ class ErrorCodes
     public const ADVANCE_FULLY_APPLIED = [
         'code' => 'PAY_3504',
         'message' => 'This advance payment has already been fully applied.',
+        'http_status' => 400,
+    ];
+
+    // Returns & Refunds (3600-3699)
+    public const BIZ_RETURN_WINDOW_EXPIRED = [
+        'code' => 'RET_3601',
+        'message' => 'The return window for this purchase has expired.',
+        'http_status' => 400,
+    ];
+
+    public const BIZ_INVALID_STATUS_TRANSITION = [
+        'code' => 'BIZ_3602',
+        'message' => 'Invalid status transition for this operation.',
+        'http_status' => 422,
+    ];
+
+    public const BIZ_INSUFFICIENT_BALANCE = [
+        'code' => 'BIZ_3603',
+        'message' => 'Insufficient balance for this operation.',
+        'http_status' => 422,
+    ];
+
+    public const VALIDATION_INVALID_AMOUNT = [
+        'code' => 'VAL_2010',
+        'message' => 'The amount provided is invalid.',
+        'http_status' => 422,
+    ];
+
+    public const BIZ_RETURN_NOT_ELIGIBLE = [
+        'code' => 'RET_3604',
+        'message' => 'This item is not eligible for return.',
+        'http_status' => 400,
+    ];
+
+    public const BIZ_EXCHANGE_PRICE_MISMATCH = [
+        'code' => 'RET_3605',
+        'message' => 'Exchange price difference must be resolved.',
+        'http_status' => 400,
+    ];
+
+    // Loyalty & Points (3700-3799)
+    public const LOYALTY_INSUFFICIENT_POINTS = [
+        'code' => 'LOYALTY_3701',
+        'message' => 'Insufficient points for this redemption.',
+        'http_status' => 400,
+    ];
+
+    public const LOYALTY_MIN_REDEEM_NOT_MET = [
+        'code' => 'LOYALTY_3702',
+        'message' => 'Minimum redemption points threshold not met.',
+        'http_status' => 400,
+    ];
+
+    public const LOYALTY_REWARD_OUT_OF_STOCK = [
+        'code' => 'LOYALTY_3703',
+        'message' => 'This reward is no longer available.',
+        'http_status' => 400,
+    ];
+
+    public const LOYALTY_TIER_REQUIRED = [
+        'code' => 'LOYALTY_3704',
+        'message' => 'A higher loyalty tier is required for this reward.',
+        'http_status' => 400,
+    ];
+
+    public const LOYALTY_POINTS_EXPIRED = [
+        'code' => 'LOYALTY_3705',
+        'message' => 'Some or all of your points have expired.',
         'http_status' => 400,
     ];
 

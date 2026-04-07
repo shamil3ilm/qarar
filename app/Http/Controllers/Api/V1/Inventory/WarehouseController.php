@@ -10,34 +10,26 @@ use App\Models\Inventory\Warehouse;
 use App\Services\Inventory\StockService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class WarehouseController extends Controller
 {
     public function __construct(
         private StockService $stockService
-    ) {}
+    ) {
+    }
 
     /**
      * List warehouses.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
-        $query = Warehouse::with(['branch', 'manager']);
+        $query = Warehouse::with(['branch', 'manager'])
+            ->when($request->boolean('active_only'), fn($q) => $q->active())
+            ->when($request->has('branch_id'), fn($q) => $q->where('branch_id', $request->input('branch_id')));
 
-        if ($request->boolean('active_only', false)) {
-            $query->active();
-        }
+        $warehouses = $query->get();
 
-        if ($request->has('branch_id')) {
-            $query->where('branch_id', $request->input('branch_id'));
-        }
-
-        $warehouses = $request->boolean('paginate', true)
-            ? $query->paginate($request->integer('per_page', 15))
-            : $query->get();
-
-        return WarehouseResource::collection($warehouses);
+        return $this->success(WarehouseResource::collection($warehouses));
     }
 
     /**
@@ -46,7 +38,7 @@ class WarehouseController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'branch_id' => 'nullable|integer|exists:branches,id',
+            'branch_id' => 'required|integer|exists:branches,id',
             'name' => 'required|string|max:100',
             'code' => 'required|string|max:20|unique:warehouses,code',
             'address' => 'nullable|string|max:500',
@@ -62,16 +54,12 @@ class WarehouseController extends Controller
 
         // If setting as default, unset other defaults
         if ($validated['is_default'] ?? false) {
-            Warehouse::where('is_default', true)->update(['is_default' => false]);
+            Warehouse::where('is_default', true)->each(fn (Warehouse $w) => $w->update(['is_default' => false]));
         }
 
         $warehouse = Warehouse::create($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Warehouse created successfully.',
-            'data' => new WarehouseResource($warehouse),
-        ], 201);
+        return $this->created(new WarehouseResource($warehouse), 'Warehouse created successfully.');
     }
 
     /**
@@ -81,10 +69,7 @@ class WarehouseController extends Controller
     {
         $warehouse->load(['branch', 'manager', 'locations']);
 
-        return response()->json([
-            'success' => true,
-            'data' => new WarehouseResource($warehouse),
-        ]);
+        return $this->success(new WarehouseResource($warehouse));
     }
 
     /**
@@ -109,16 +94,12 @@ class WarehouseController extends Controller
 
         // If setting as default, unset other defaults
         if (($validated['is_default'] ?? false) && !$warehouse->is_default) {
-            Warehouse::where('is_default', true)->update(['is_default' => false]);
+            Warehouse::where('is_default', true)->each(fn (Warehouse $w) => $w->update(['is_default' => false]));
         }
 
         $warehouse->update($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Warehouse updated successfully.',
-            'data' => new WarehouseResource($warehouse->fresh()),
-        ]);
+        return $this->success(new WarehouseResource($warehouse->fresh()), 'Warehouse updated successfully.');
     }
 
     /**
@@ -128,58 +109,56 @@ class WarehouseController extends Controller
     {
         // Check for stock
         if ($warehouse->stockLevels()->where('quantity', '>', 0)->exists()) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot delete warehouse with existing stock.',
-                ],
-            ], 422);
-        }
-
-        // Check if it's the only warehouse
-        if (Warehouse::count() === 1) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot delete the only warehouse.',
-                ],
-            ], 422);
+            return $this->error('Cannot delete warehouse with existing stock.', 'VALIDATION_ERROR', 422);
         }
 
         $warehouse->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Warehouse deleted successfully.',
-        ]);
+        return $this->success(null, 'Warehouse deleted successfully.');
     }
 
     /**
      * Get stock valuation for a warehouse.
      */
-    public function stockValuation(Warehouse $warehouse): JsonResponse
+    public function stockValuation(Request $request, Warehouse $warehouse): JsonResponse
     {
-        $valuation = $this->stockService->getStockValuation($warehouse->id);
+        try {
+            $result    = $this->stockService->getStockValuation(
+                $warehouse->id,
+                $request->integer('per_page', 25),
+            );
+            $paginator = $result['items'];
 
-        return response()->json([
-            'success' => true,
-            'data' => $valuation,
-        ]);
+            return $this->success([
+                'items'  => $paginator->items(),
+                'totals' => $result['totals'],
+                'meta'   => [
+                    'current_page' => $paginator->currentPage(),
+                    'per_page'     => $paginator->perPage(),
+                    'total'        => $paginator->total(),
+                    'last_page'    => $paginator->lastPage(),
+                ],
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
      * Get low stock items in a warehouse.
      */
-    public function lowStock(Warehouse $warehouse): JsonResponse
+    public function lowStock(Request $request, Warehouse $warehouse): JsonResponse
     {
-        $items = $this->stockService->getLowStockProducts($warehouse->id);
+        try {
+            $items = $this->stockService->getLowStockProducts(
+                $warehouse->id,
+                $request->integer('per_page', 25),
+            );
 
-        return response()->json([
-            'success' => true,
-            'data' => $items,
-        ]);
+            return $this->paginated($items);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -187,13 +166,10 @@ class WarehouseController extends Controller
      */
     public function setDefault(Warehouse $warehouse): JsonResponse
     {
-        Warehouse::where('is_default', true)->update(['is_default' => false]);
+        Warehouse::where('is_default', true)
+            ->each(fn (Warehouse $w) => $w->update(['is_default' => false]));
         $warehouse->update(['is_default' => true]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Default warehouse updated.',
-            'data' => new WarehouseResource($warehouse->fresh()),
-        ]);
+        return $this->success(new WarehouseResource($warehouse->fresh()), 'Default warehouse updated.');
     }
 }

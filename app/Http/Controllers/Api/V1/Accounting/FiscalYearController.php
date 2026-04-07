@@ -70,7 +70,7 @@ class FiscalYearController extends Controller
         })->exists();
 
         if ($overlap) {
-            return $this->error('Fiscal year dates overlap with an existing fiscal year', 'OVERLAP', 400);
+            return $this->error('Fiscal year dates overlap with an existing fiscal year', 'OVERLAP', 422);
         }
 
         $fiscalYear = FiscalYear::create([
@@ -155,6 +155,10 @@ class FiscalYearController extends Controller
      */
     public function destroy(FiscalYear $fiscalYear): JsonResponse
     {
+        if ($fiscalYear->is_closed) {
+            return $this->error('Closed fiscal years cannot be deleted', 'CLOSED', 400);
+        }
+
         if ($fiscalYear->journalEntries()->exists()) {
             return $this->error('Cannot delete fiscal year with journal entries', 'HAS_ENTRIES', 400);
         }

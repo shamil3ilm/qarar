@@ -4,17 +4,20 @@ declare(strict_types=1);
 
 namespace App\Models\Sales;
 
-use App\Models\Accounting\ChartOfAccount;
+use App\Models\Accounting\Account;
 use App\Models\Inventory\Product;
 use App\Models\Inventory\ProductVariant;
 use App\Models\Inventory\UnitOfMeasure;
 use App\Models\Inventory\Warehouse;
 use App\Models\Tax\TaxCategory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InvoiceLine extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'invoice_id',
         'product_id',
@@ -30,6 +33,8 @@ class InvoiceLine extends Model
         'tax_rate',
         'tax_amount',
         'tax_code',
+        'tax_exemption_code',
+        'tax_exemption_reason',
         'cgst_rate',
         'cgst_amount',
         'sgst_rate',
@@ -99,7 +104,7 @@ class InvoiceLine extends Model
 
     public function account(): BelongsTo
     {
-        return $this->belongsTo(ChartOfAccount::class, 'account_id');
+        return $this->belongsTo(Account::class, 'account_id');
     }
 
     public function warehouse(): BelongsTo

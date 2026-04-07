@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Models\Purchase;
 
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\Inventory\Warehouse;
 use App\Models\Sales\Contact;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -18,9 +20,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PurchaseOrder extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasUuid, HasStateMachine, SoftDeletes;
 
     public const STATUS_DRAFT = 'draft';
+    public const STATUS_PENDING_APPROVAL = 'pending_approval';
     public const STATUS_SENT = 'sent';
     public const STATUS_CONFIRMED = 'confirmed';
     public const STATUS_PARTIALLY_RECEIVED = 'partially_received';
@@ -77,7 +80,7 @@ class PurchaseOrder extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }
@@ -85,14 +88,28 @@ class PurchaseOrder extends Model
     protected function getStateTransitions(): array
     {
         return [
-            self::STATUS_DRAFT => [self::STATUS_SENT, self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
-            self::STATUS_SENT => [self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
-            self::STATUS_CONFIRMED => [self::STATUS_PARTIALLY_RECEIVED, self::STATUS_RECEIVED, self::STATUS_CANCELLED],
+            self::STATUS_DRAFT            => [self::STATUS_PENDING_APPROVAL, self::STATUS_SENT, self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
+            self::STATUS_PENDING_APPROVAL => [self::STATUS_DRAFT, self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
+            self::STATUS_SENT             => [self::STATUS_CONFIRMED, self::STATUS_CANCELLED],
+            self::STATUS_CONFIRMED        => [self::STATUS_PARTIALLY_RECEIVED, self::STATUS_RECEIVED, self::STATUS_CANCELLED],
             self::STATUS_PARTIALLY_RECEIVED => [self::STATUS_RECEIVED, self::STATUS_BILLED],
-            self::STATUS_RECEIVED => [self::STATUS_BILLED],
-            self::STATUS_BILLED => [],
-            self::STATUS_CANCELLED => [],
+            self::STATUS_RECEIVED         => [self::STATUS_BILLED],
+            self::STATUS_BILLED           => [],
+            self::STATUS_CANCELLED        => [],
         ];
+    }
+
+    public function isPendingApproval(): bool
+    {
+        return $this->status === self::STATUS_PENDING_APPROVAL;
+    }
+
+    /**
+     * Mark PO as pending approval (called by ApprovalWorkflowService via markPendingApproval hook).
+     */
+    public function markPendingApproval(): void
+    {
+        $this->update(['status' => self::STATUS_PENDING_APPROVAL]);
     }
 
     public function branch(): BelongsTo

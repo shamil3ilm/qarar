@@ -177,7 +177,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['organization_id', 'status']);
-            $table->index(['payable_type', 'payable_id']);
             $table->index('external_payment_id');
         });
 

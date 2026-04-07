@@ -14,8 +14,37 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
-class ExportService
+class AsyncExportService
 {
+    /**
+     * Maximum number of records permitted in a single export to prevent
+     * memory exhaustion and runaway queries.
+     */
+    private const MAX_EXPORT_RECORDS = 50000;
+
+    /**
+     * Allowed filter field names to prevent SQL injection via user-supplied
+     * array keys in applyFilters().
+     */
+    private const ALLOWED_FILTER_FIELDS = [
+        'status',
+        'created_at',
+        'updated_at',
+        'organization_id',
+        'contact_type',
+        'employment_status',
+        'account_type',
+        'is_active',
+        'currency_code',
+        'category_id',
+        'warehouse_id',
+        'lead_status',
+        'invoice_date',
+        'due_date',
+        'payment_date',
+        'hire_date',
+    ];
+
     /**
      * Create an export job.
      */
@@ -139,21 +168,25 @@ class ExportService
 
     /**
      * Cleanup expired exports.
+     *
+     * Uses chunkById to avoid loading the entire expired-export set into memory
+     * at once; each chunk deletes its storage file then soft/hard-deletes the row.
      */
     public function cleanupExpired(): int
     {
-        $expiredExports = ExportJob::where('expires_at', '<', now())
-            ->whereNotNull('file_path')
-            ->get();
-
         $count = 0;
-        foreach ($expiredExports as $export) {
-            if ($export->file_path && Storage::disk('local')->exists($export->file_path)) {
-                Storage::disk('local')->delete($export->file_path);
-            }
-            $export->delete();
-            $count++;
-        }
+
+        ExportJob::where('expires_at', '<', now())
+            ->whereNotNull('file_path')
+            ->chunkById(200, function ($exports) use (&$count) {
+                foreach ($exports as $export) {
+                    if ($export->file_path && Storage::disk('local')->exists($export->file_path)) {
+                        Storage::disk('local')->delete($export->file_path);
+                    }
+                    $export->delete();
+                    $count++;
+                }
+            });
 
         return $count;
     }
@@ -185,7 +218,22 @@ class ExportService
             $query = $this->applyFilters($query, $exportJob->filters, $exportJob->entity_type);
         }
 
-        return $query->get();
+        $count = $query->count();
+        if ($count > self::MAX_EXPORT_RECORDS) {
+            throw new \InvalidArgumentException(
+                "Export limit exceeded: {$count} records (max " . self::MAX_EXPORT_RECORDS . ")"
+            );
+        }
+
+        $allRecords = [];
+
+        $query->chunkById(500, function ($records) use (&$allRecords) {
+            foreach ($records as $record) {
+                $allRecords[] = $record;
+            }
+        });
+
+        return collect($allRecords);
     }
 
     protected function getQueryForEntity(ExportJob $exportJob): Builder
@@ -213,7 +261,7 @@ class ExportService
                 ->where('organization_id', $organizationId)
                 ->with(['department', 'designation']),
 
-            ExportJob::ENTITY_CHART_OF_ACCOUNTS => \App\Models\Accounting\ChartOfAccount::query()
+            ExportJob::ENTITY_CHART_OF_ACCOUNTS => \App\Models\Accounting\Account::query()
                 ->where('organization_id', $organizationId)
                 ->with(['parent']),
 
@@ -231,6 +279,12 @@ class ExportService
     protected function applyFilters(Builder $query, array $filters, string $entityType): Builder
     {
         foreach ($filters as $field => $value) {
+            if (!in_array($field, self::ALLOWED_FILTER_FIELDS, true)) {
+                // Silently skip fields not in the whitelist to prevent SQL injection
+                // via user-controlled array keys being passed to ->where().
+                continue;
+            }
+
             if ($value === null || $value === '') {
                 continue;
             }

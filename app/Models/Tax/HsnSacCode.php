@@ -6,8 +6,10 @@ namespace App\Models\Tax;
 
 use Illuminate\Database\Eloquent\Model;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class HsnSacCode extends Model
 {
+    use HasFactory;
     public const TYPE_GOODS = 'goods';
     public const TYPE_SERVICE = 'service';
 

@@ -6,6 +6,7 @@ namespace App\Services\Core;
 
 use App\Models\Core\EmailLog;
 use App\Models\Core\EmailTemplate;
+use App\Models\Sales\Invoice;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Mail\Mailable;
 use Illuminate\Support\Facades\Mail;
@@ -24,9 +25,11 @@ class EmailService
         ?int $organizationId = null,
         ?Model $emailable = null,
         array $attachments = [],
-        string $language = 'en'
+        string $language = 'en',
+        ?int $userId = null
     ): EmailLog {
         $organizationId = $organizationId ?? auth()->user()?->organization_id;
+        $userId = $userId ?? auth()->id();
 
         // Get the template
         $template = EmailTemplate::getTemplate($templateCode, $organizationId, $language);
@@ -41,7 +44,7 @@ class EmailService
         // Create log entry
         $log = EmailLog::create([
             'organization_id' => $organizationId,
-            'user_id' => auth()->id(),
+            'user_id' => $userId,
             'template_code' => $templateCode,
             'emailable_type' => $emailable ? get_class($emailable) : null,
             'emailable_id' => $emailable?->id,
@@ -92,9 +95,11 @@ class EmailService
         ?int $organizationId = null,
         ?Model $emailable = null,
         array $attachments = [],
-        string $language = 'en'
+        string $language = 'en',
+        ?int $userId = null
     ): EmailLog {
         $organizationId = $organizationId ?? auth()->user()?->organization_id;
+        $userId = $userId ?? auth()->id();
 
         // Get the template
         $template = EmailTemplate::getTemplate($templateCode, $organizationId, $language);
@@ -109,7 +114,7 @@ class EmailService
         // Create log entry
         $log = EmailLog::create([
             'organization_id' => $organizationId,
-            'user_id' => auth()->id(),
+            'user_id' => $userId,
             'template_code' => $templateCode,
             'emailable_type' => $emailable ? get_class($emailable) : null,
             'emailable_id' => $emailable?->id,
@@ -121,8 +126,8 @@ class EmailService
             'status' => EmailLog::STATUS_QUEUED,
         ]);
 
-        // Dispatch job
-        dispatch(new \App\Jobs\SendQueuedEmail($log->id, $rendered, $attachments));
+        // Dispatch job — only after the surrounding DB transaction commits
+        \App\Jobs\SendQueuedEmail::dispatch($log->id, $rendered, $attachments)->afterCommit();
 
         return $log;
     }
@@ -137,14 +142,16 @@ class EmailService
         ?string $toName = null,
         ?int $organizationId = null,
         ?Model $emailable = null,
-        array $attachments = []
+        array $attachments = [],
+        ?int $userId = null
     ): EmailLog {
         $organizationId = $organizationId ?? auth()->user()?->organization_id;
+        $userId = $userId ?? auth()->id();
 
         // Create log entry
         $log = EmailLog::create([
             'organization_id' => $organizationId,
-            'user_id' => auth()->id(),
+            'user_id' => $userId,
             'emailable_type' => $emailable ? get_class($emailable) : null,
             'emailable_id' => $emailable?->id,
             'to_email' => $toEmail,
@@ -209,11 +216,19 @@ class EmailService
                 }
 
                 if ($this->replyToEmail) {
+                    if (!filter_var($this->replyToEmail, FILTER_VALIDATE_EMAIL)) {
+                        throw new \InvalidArgumentException("Invalid reply-to email address: {$this->replyToEmail}");
+                    }
                     $mail->replyTo($this->replyToEmail);
                 }
 
                 foreach ($this->emailAttachments as $attachment) {
                     if (isset($attachment['path'])) {
+                        $allowedBasePath = storage_path('app');
+                        $realPath = realpath($attachment['path']);
+                        if ($realPath === false || !str_starts_with($realPath, $allowedBasePath)) {
+                            throw new \App\Exceptions\ApiException("Attachment path is not allowed: {$attachment['path']}");
+                        }
                         $mail->attach($attachment['path'], [
                             'as' => $attachment['name'] ?? null,
                             'mime' => $attachment['mime'] ?? null,
@@ -278,36 +293,71 @@ class EmailService
     }
 
     /**
-     * Retry a failed email.
+     * Dispatch a queued email notification for a sent invoice.
+     *
+     * Uses the 'invoice_sent' template when available. Falls back to a
+     * structured log entry when no template is configured, so callers
+     * never receive an exception from a missing template at this stage.
+     *
+     * Called from GenerateInvoiceDocumentJob — runs on a queue worker,
+     * not in the HTTP request lifecycle.
      */
-    public function retry(EmailLog $log): EmailLog
+    public function sendInvoiceEmail(Invoice $invoice): void
+    {
+        $customer = $invoice->customer;
+
+        if ($customer === null || empty($customer->email)) {
+            Log::info('EmailService: sendInvoiceEmail skipped — no customer email', [
+                'invoice_id' => $invoice->id,
+            ]);
+            return;
+        }
+
+        Log::info('EmailService: sendInvoiceEmail called', ['invoice_id' => $invoice->id]);
+
+        // Dispatch a queued email notification for the invoice.
+        // Implementation depends on the mailable/notification setup;
+        // wire a concrete template here once 'invoice_sent' is defined.
+        try {
+            $this->queueTemplate(
+                'invoice_sent',
+                $customer->email,
+                [
+                    'invoice_number' => $invoice->invoice_number,
+                    'customer_name'  => $customer->getDisplayName(),
+                    'total'          => $invoice->total,
+                    'due_date'       => $invoice->due_date?->toDateString(),
+                    'currency'       => $invoice->currency_code,
+                ],
+                $customer->getDisplayName(),
+                $invoice->organization_id,
+                $invoice,
+            );
+        } catch (\RuntimeException $e) {
+            // Template not yet configured — log and skip rather than surfacing
+            // an error that would fail the GenerateInvoiceDocumentJob retry loop.
+            Log::warning('EmailService: invoice_sent template not found, skipping email', [
+                'invoice_id' => $invoice->id,
+                'error'      => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Retry a failed email.
+     *
+     * EmailLog does not store the original rendered body or template data, so
+     * it is impossible to re-render and re-send the email automatically.
+     * Callers must re-invoke sendTemplate() / sendRaw() with fresh data.
+     */
+    public function retry(EmailLog $log, ?int $userId = null): EmailLog
     {
         if (!$log->isFailed()) {
             throw new \RuntimeException('Can only retry failed emails');
         }
 
-        // Create new log entry
-        $newLog = EmailLog::create([
-            'organization_id' => $log->organization_id,
-            'user_id' => auth()->id(),
-            'template_code' => $log->template_code,
-            'emailable_type' => $log->emailable_type,
-            'emailable_id' => $log->emailable_id,
-            'to_email' => $log->to_email,
-            'to_name' => $log->to_name,
-            'subject' => $log->subject,
-            'body_preview' => $log->body_preview,
-            'attachments' => $log->attachments,
-            'status' => EmailLog::STATUS_PENDING,
-        ]);
-
-        // If we have the template, re-render and send
-        if ($log->template_code && $log->emailable) {
-            // Would need to implement based on specific templates
-            // For now, just mark as failed since we can't rebuild the data
-            $newLog->markAsFailed('Retry requires manual re-send with fresh data');
-        }
-
-        return $newLog;
+        throw new \App\Exceptions\ApiException(
+            'Cannot retry: original email data not available. Re-send manually.'
+        );
     }
 }

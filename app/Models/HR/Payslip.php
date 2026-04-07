@@ -6,9 +6,11 @@ namespace App\Models\HR;
 
 use App\Models\Accounting\JournalEntry;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -16,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Payslip extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use HasFactory, BelongsToOrganization, HasAuditTrail, HasUuid, HasStateMachine, SoftDeletes;
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_PENDING = 'pending';
@@ -71,7 +73,7 @@ class Payslip extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }
@@ -133,6 +135,12 @@ class Payslip extends Model
 
     public function recalculateTotals(): void
     {
+        if (!in_array($this->status, [self::STATUS_DRAFT, self::STATUS_PENDING], true)) {
+            throw new \InvalidArgumentException(
+                "Cannot recalculate totals on payslip with status '{$this->status}'."
+            );
+        }
+
         $this->gross_earnings = $this->earnings()->sum('amount');
         $this->total_deductions = $this->deductions()->sum('amount');
         $this->net_salary = max(0, $this->gross_earnings - $this->total_deductions);
@@ -142,7 +150,7 @@ class Payslip extends Model
     public function getPayDayRate(): float
     {
         if ($this->total_working_days <= 0) {
-            return 0;
+            throw new \InvalidArgumentException('Total working days must be greater than zero for pay day rate calculation.');
         }
 
         return round($this->gross_earnings / $this->total_working_days, 4);

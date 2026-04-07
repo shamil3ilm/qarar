@@ -14,6 +14,7 @@ class OpportunityResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'opportunity_number' => $this->opportunity_number,
             'name' => $this->name,
             'description' => $this->description,
@@ -57,7 +58,6 @@ class OpportunityResource extends JsonResource
             'is_overdue' => $this->isOverdue(),
 
             // Assignment
-            'assigned_to' => $this->assigned_to,
             'assignee' => $this->whenLoaded('assignee', fn() => [
                 'id' => $this->assignee->id,
                 'name' => $this->assignee->name,
@@ -82,7 +82,6 @@ class OpportunityResource extends JsonResource
             'notes' => $this->notes,
             'tags' => $this->tags,
             'competitors' => $this->competitors,
-            'created_by' => $this->created_by,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace App\Models\Manufacturing;
 
 use App\Models\Concerns\BelongsToOrganization;
-use App\Models\Core\User;
+use App\Models\User;
 use App\Models\Inventory\Warehouse;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class MaterialTransaction extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     public const TYPE_ISSUE = 'issue';

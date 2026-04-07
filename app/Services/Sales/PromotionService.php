@@ -7,6 +7,7 @@ namespace App\Services\Sales;
 use App\Models\Sales\CouponCode;
 use App\Models\Sales\Promotion;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class PromotionService
 {
@@ -170,7 +171,7 @@ class PromotionService
             ->first();
 
         if ($coupon) {
-            if ($coupon->max_uses && $coupon->current_uses >= $coupon->max_uses) {
+            if ($coupon->max_uses && $coupon->times_used >= $coupon->max_uses) {
                 return null;
             }
 
@@ -178,7 +179,7 @@ class PromotionService
                 return null;
             }
 
-            if ($coupon->assigned_to && $coupon->assigned_to !== $customerId) {
+            if ($coupon->assigned_to_contact_id && $coupon->assigned_to_contact_id !== $customerId) {
                 return null;
             }
 
@@ -258,9 +259,18 @@ class PromotionService
 
     protected function generateUniqueCode(?string $prefix, int $length): string
     {
+        $maxAttempts = 100;
+        $attempts = 0;
+
         do {
-            $code = $prefix ?? '';
-            $code .= strtoupper(substr(str_shuffle('ABCDEFGHJKLMNPQRSTUVWXYZ23456789'), 0, $length));
+            $code = ($prefix ?? '') . strtoupper(Str::random($length));
+            $attempts++;
+
+            if ($attempts >= $maxAttempts) {
+                throw new \RuntimeException(
+                    'Failed to generate a unique coupon code after ' . $maxAttempts . ' attempts.'
+                );
+            }
         } while (CouponCode::where('code', $code)->exists());
 
         return $code;

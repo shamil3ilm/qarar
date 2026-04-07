@@ -8,8 +8,10 @@ use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class ExchangeRate extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     protected $fillable = [
@@ -54,19 +56,21 @@ class ExchangeRate extends Model
 
         $date = $date ?? now()->toDateString();
 
-        $rate = static::where('organization_id', $organizationId)
+        $rate = static::withoutGlobalScopes()
+            ->where('organization_id', $organizationId)
             ->where('from_currency', $fromCurrency)
             ->where('to_currency', $toCurrency)
-            ->where('rate_date', '<=', $date)
+            ->whereDate('rate_date', '<=', $date)
             ->orderByDesc('rate_date')
             ->value('rate');
 
         // Try inverse rate if direct rate not found
         if ($rate === null) {
-            $inverseRate = static::where('organization_id', $organizationId)
+            $inverseRate = static::withoutGlobalScopes()
+                ->where('organization_id', $organizationId)
                 ->where('from_currency', $toCurrency)
                 ->where('to_currency', $fromCurrency)
-                ->where('rate_date', '<=', $date)
+                ->whereDate('rate_date', '<=', $date)
                 ->orderByDesc('rate_date')
                 ->value('rate');
 

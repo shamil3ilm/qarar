@@ -14,8 +14,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Attachment extends Model
 {
+    use HasFactory;
     use BelongsToOrganization, SoftDeletes;
 
     protected $fillable = [

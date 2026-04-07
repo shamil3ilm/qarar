@@ -4,20 +4,32 @@ declare(strict_types=1);
 
 namespace App\Services\Purchase;
 
+use App\Exceptions\ApiException;
+use App\Exceptions\ErrorCodes;
+use App\Models\Core\ApprovalWorkflow;
 use App\Models\Core\Organization;
+use App\Models\Core\UserEvent;
 use App\Models\Purchase\PurchaseOrder;
+use App\Models\Purchase\ReleaseStrategy;
 use App\Models\Sales\Contact;
+use App\Services\Core\ApprovalWorkflowService;
 use App\Services\Core\NumberGeneratorService;
+use App\Services\Core\UserEventService;
 use App\Services\Inventory\StockService;
+use App\Services\Purchase\ReleaseStrategyService;
 use App\Services\Tax\TaxCalculatorService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PurchaseOrderService
 {
     public function __construct(
         private TaxCalculatorService $taxCalculator,
         private StockService $stockService,
-        private NumberGeneratorService $numberGenerator
+        private NumberGeneratorService $numberGenerator,
+        private UserEventService $userEventService,
+        private ApprovalWorkflowService $approvalWorkflowService,
+        private ReleaseStrategyService $releaseStrategyService,
     ) {}
 
     /**
@@ -25,9 +37,10 @@ class PurchaseOrderService
      */
     public function create(array $data, array $lines): PurchaseOrder
     {
-        return DB::transaction(function () use ($data, $lines) {
+        $order = DB::transaction(function () use ($data, $lines) {
             $organization = Organization::findOrFail(auth()->user()->organization_id);
-            $supplier = Contact::findOrFail($data['supplier_id']);
+            $supplier = Contact::where('organization_id', auth()->user()->organization_id)
+                ->findOrFail($data['supplier_id']);
 
             if (empty($data['order_number'])) {
                 $data['order_number'] = $this->numberGenerator->generate('PO');
@@ -52,6 +65,15 @@ class PurchaseOrderService
             foreach ($lines as $index => $lineData) {
                 $taxLine = $taxResult->lines[$index] ?? [];
 
+                if (empty($lineData['description'])) {
+                    $product = isset($lineData['product_id'])
+                        ? \App\Models\Inventory\Product::withoutGlobalScopes()
+                            ->where('organization_id', $order->organization_id)
+                            ->find($lineData['product_id'])
+                        : null;
+                    $lineData['description'] = $product?->name ?? '';
+                }
+
                 $order->lines()->create(array_merge($lineData, [
                     'tax_rate' => $taxLine['tax_rate'] ?? 0,
                     'tax_amount' => $taxLine['tax_amount'] ?? 0,
@@ -67,9 +89,36 @@ class PurchaseOrderService
             }
 
             $order->recalculateTotals();
+            $order = $order->fresh(['lines', 'supplier']);
 
-            return $order->load('lines', 'supplier');
+            // --- PO Release: auto-route for approval when required ---
+            $userId = auth('api')->id() ?? 0;
+            if ($this->requiresApproval($order)) {
+                $this->submitForApproval($order, $userId);
+
+                // Initiate multi-level release strategy when one is configured
+                $this->releaseStrategyService->initiate(
+                    ReleaseStrategy::DOCUMENT_TYPE_PURCHASE_ORDER,
+                    $order->id,
+                    (float) $order->total
+                );
+            }
+
+            return $order->fresh(['lines', 'supplier']);
         });
+
+        try {
+            $this->userEventService->track(
+                UserEvent::PURCHASE_ORDER_CREATED,
+                ['order_id' => $order->id, 'order_number' => $order->order_number, 'total' => $order->total],
+                auth('api')->id(),
+                $order->organization_id,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Event tracking failed', ['event' => UserEvent::PURCHASE_ORDER_CREATED, 'error' => $e->getMessage()]);
+        }
+
+        return $order;
     }
 
     /**
@@ -85,7 +134,7 @@ class PurchaseOrderService
             if (isset($data['version']) && $data['version'] !== $order->version) {
                 throw new \App\Exceptions\ConcurrencyException(
                     'Purchase order has been modified by another user.',
-                    $order->version
+                    $order
                 );
             }
 
@@ -134,7 +183,7 @@ class PurchaseOrderService
             throw new \InvalidArgumentException('Only draft orders can be sent.');
         }
 
-        $order->update(['status' => PurchaseOrder::STATUS_SENT]);
+        $order->transitionTo(PurchaseOrder::STATUS_SENT);
 
         return $order->fresh();
     }
@@ -142,7 +191,7 @@ class PurchaseOrderService
     /**
      * Confirm a purchase order.
      */
-    public function confirm(PurchaseOrder $order): PurchaseOrder
+    public function confirm(PurchaseOrder $order, int $userId): PurchaseOrder
     {
         if (!in_array($order->status, [PurchaseOrder::STATUS_DRAFT, PurchaseOrder::STATUS_SENT], true)) {
             throw new \InvalidArgumentException('Only draft/sent orders can be confirmed.');
@@ -150,11 +199,24 @@ class PurchaseOrderService
 
         $order->update([
             'status' => PurchaseOrder::STATUS_CONFIRMED,
-            'approved_by' => auth()->id(),
+            'approved_by' => $userId,
             'approved_at' => now(),
         ]);
 
-        return $order->fresh();
+        $order = $order->fresh();
+
+        try {
+            $this->userEventService->track(
+                UserEvent::PURCHASE_ORDER_APPROVED,
+                ['order_id' => $order->id, 'order_number' => $order->order_number],
+                auth('api')->id(),
+                $order->organization_id,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Event tracking failed', ['event' => UserEvent::PURCHASE_ORDER_APPROVED, 'error' => $e->getMessage()]);
+        }
+
+        return $order;
     }
 
     /**
@@ -166,10 +228,8 @@ class PurchaseOrderService
             throw new \InvalidArgumentException('Cannot cancel orders that are received, billed, or already cancelled.');
         }
 
-        $order->update([
-            'status' => PurchaseOrder::STATUS_CANCELLED,
-            'notes' => $order->notes . "\n\nCancelled: " . $reason,
-        ]);
+        $order->update(['notes' => $order->notes . "\n\nCancelled: " . $reason]);
+        $order->transitionTo(PurchaseOrder::STATUS_CANCELLED);
 
         return $order->fresh();
     }
@@ -194,8 +254,6 @@ class PurchaseOrderService
                     continue;
                 }
 
-                $line->increment('quantity_received', $quantityToReceive);
-
                 if ($line->product_id && $line->product?->track_inventory) {
                     $targetWarehouse = $warehouseId ?? $line->warehouse_id ?? $order->warehouse_id;
 
@@ -211,6 +269,8 @@ class PurchaseOrderService
                         );
                     }
                 }
+
+                $line->increment('quantity_received', $quantityToReceive);
             }
 
             $this->updateReceivingStatus($order);
@@ -295,5 +355,128 @@ class PurchaseOrderService
             'notes' => $order->notes,
             'terms_and_conditions' => $order->terms_and_conditions,
         ], $lines);
+    }
+
+    // -------------------------------------------------------------------------
+    // PO Release / Approval
+    // -------------------------------------------------------------------------
+
+    /**
+     * Determine whether this purchase order must go through an approval
+     * workflow before it can be confirmed.
+     *
+     * A PO requires approval when:
+     *   - Its total exceeds the configured threshold, OR
+     *   - The organisation has an active ApprovalWorkflow for PurchaseOrder.
+     */
+    protected function requiresApproval(PurchaseOrder $po): bool
+    {
+        $threshold = (float) config('erp.po_approval_threshold', 10000);
+
+        if ((float) $po->total > $threshold) {
+            return true;
+        }
+
+        return ApprovalWorkflow::active()
+            ->forType(PurchaseOrder::class)
+            ->exists();
+    }
+
+    /**
+     * Submit the PO into the approval workflow and set its status to
+     * pending_approval.
+     */
+    protected function submitForApproval(PurchaseOrder $po, int $userId): void
+    {
+        try {
+            $this->approvalWorkflowService->submit(
+                approvable: $po,
+                userId: $userId,
+                amount: (float) $po->total,
+                notes: "Auto-submitted: PO {$po->order_number} requires approval."
+            );
+        } catch (\InvalidArgumentException $e) {
+            // No workflow configured – fall back to setting status manually so
+            // it is still flagged for manual approval.
+            Log::info('PO approval: no workflow found, setting status to pending_approval manually.', [
+                'po_id'     => $po->id,
+                'po_number' => $po->order_number,
+                'reason'    => $e->getMessage(),
+            ]);
+
+            $po->update(['status' => PurchaseOrder::STATUS_PENDING_APPROVAL]);
+        }
+    }
+
+    /**
+     * Approve a PO that is pending approval.
+     *
+     * When a release strategy applies:
+     *   1. Advances the current pending level in the release strategy.
+     *   2. If fully released, marks the PO as confirmed.
+     *   3. If not fully released, returns the PO still in pending_approval state.
+     *
+     * When no release strategy applies, falls back to single-step approval.
+     */
+    public function approvePO(PurchaseOrder $po, int $userId, ?string $notes = null): PurchaseOrder
+    {
+        if (!$po->isPendingApproval()) {
+            throw new \InvalidArgumentException('Only purchase orders pending approval can be approved.');
+        }
+
+        // Check for an active release strategy
+        $currentLevel = $this->releaseStrategyService->getCurrentLevel(
+            ReleaseStrategy::DOCUMENT_TYPE_PURCHASE_ORDER,
+            $po->id
+        );
+
+        if ($currentLevel !== null) {
+            $approver = \App\Models\User::findOrFail($userId);
+            $fullyReleased = $this->releaseStrategyService->approve($currentLevel, $approver, $notes);
+
+            if (! $fullyReleased) {
+                // More levels remain — keep PO in pending_approval
+                return $po->fresh(['lines', 'supplier']);
+            }
+
+            // All levels approved — fall through to mark PO confirmed below
+        }
+
+        $po->update([
+            'status'      => PurchaseOrder::STATUS_CONFIRMED,
+            'approved_by' => $userId,
+            'approved_at' => now(),
+            'notes'       => $po->notes . ($notes ? "\n\nApproval notes: {$notes}" : ''),
+        ]);
+
+        try {
+            $this->userEventService->track(
+                UserEvent::PURCHASE_ORDER_APPROVED,
+                ['order_id' => $po->id, 'order_number' => $po->order_number],
+                $userId,
+                $po->organization_id,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Event tracking failed', ['event' => UserEvent::PURCHASE_ORDER_APPROVED, 'error' => $e->getMessage()]);
+        }
+
+        return $po->fresh(['lines', 'supplier']);
+    }
+
+    /**
+     * Reject a PO that is pending approval, reverting it to draft.
+     */
+    public function rejectPO(PurchaseOrder $po, int $userId, string $reason): PurchaseOrder
+    {
+        if (!$po->isPendingApproval()) {
+            throw new \InvalidArgumentException('Only purchase orders pending approval can be rejected.');
+        }
+
+        $po->update([
+            'status' => PurchaseOrder::STATUS_DRAFT,
+            'notes'  => $po->notes . "\n\nRejected by user #{$userId}: {$reason}",
+        ]);
+
+        return $po->fresh(['lines', 'supplier']);
     }
 }

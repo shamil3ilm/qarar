@@ -6,6 +6,7 @@ namespace App\Models\Core;
 
 use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -36,6 +37,7 @@ class Organization extends Model
         'postal_code',
         'settings',
         'logo_url',
+        'status',
         'is_active',
         'activated_at',
         'suspended_at',
@@ -48,13 +50,27 @@ class Organization extends Model
         'fiscal_year_start_day' => 'integer',
         'activated_at' => 'datetime',
         'suspended_at' => 'datetime',
+        'tax_number' => 'encrypted',
     ];
 
     protected static function booted(): void
     {
         static::creating(function (Organization $organization): void {
             if (empty($organization->slug)) {
-                $organization->slug = Str::slug($organization->name);
+                $baseSlug = Str::slug($organization->name);
+                $slug = $baseSlug;
+                $counter = 1;
+                while (static::where('slug', $slug)->exists()) {
+                    $slug = $baseSlug . '-' . $counter++;
+                }
+                $organization->slug = $slug;
+            }
+        });
+
+        static::created(function (Organization $org): void {
+            if (!empty($org->country_code)) {
+                app(\App\Services\Core\SettingsService::class)
+                    ->initializeByCountry($org->id, $org->country_code, false);
             }
         });
     }
@@ -118,18 +134,4 @@ class Organization extends Model
         };
     }
 
-    public function getSetting(string $group, string $key, mixed $default = null): mixed
-    {
-        $settings = $this->settings ?? [];
-
-        return $settings[$group][$key] ?? $default;
-    }
-
-    public function setSetting(string $group, string $key, mixed $value): void
-    {
-        $settings = $this->settings ?? [];
-        $settings[$group][$key] = $value;
-        $this->settings = $settings;
-        $this->save();
-    }
 }

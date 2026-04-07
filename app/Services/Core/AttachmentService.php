@@ -13,6 +13,13 @@ use Intervention\Image\Laravel\Facades\Image;
 
 class AttachmentService
 {
+    private const ALLOWED_MIME_TYPES = [
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv',
+    ];
     /**
      * Upload a file and create attachment record.
      */
@@ -20,9 +27,13 @@ class AttachmentService
         UploadedFile $file,
         ?Model $attachable = null,
         ?int $organizationId = null,
-        array $options = []
+        array $options = [],
+        int $userId = 0
     ): Attachment {
         $organizationId = $organizationId ?? auth()->user()?->organization_id;
+        if ($userId === 0) {
+            $userId = (int) auth()->id();
+        }
 
         if (!$organizationId) {
             throw new \RuntimeException('Organization ID is required');
@@ -34,6 +45,12 @@ class AttachmentService
         // Validate file
         $this->validateFile($file, $category);
 
+        // Path traversal validation on the client-supplied filename
+        $filename = basename($file->getClientOriginalName());
+        if (str_contains($filename, '..') || str_contains($filename, '/') || str_contains($filename, '\\')) {
+            throw new \InvalidArgumentException('Invalid filename.');
+        }
+
         // Generate unique filename
         $extension = $file->getClientOriginalExtension();
         $fileName = Str::uuid() . '.' . $extension;
@@ -42,6 +59,13 @@ class AttachmentService
         $disk = $options['disk'] ?? config('filesystems.default', 'local');
         $basePath = $options['path'] ?? "attachments/{$organizationId}";
         $path = "{$basePath}/{$fileName}";
+
+        // Verify the resolved storage path is within the expected storage directory
+        $resolvedStoragePath = storage_path('app/' . $path);
+        $realStoragePath = realpath(storage_path('app'));
+        if ($realStoragePath !== false && !str_starts_with(realpath($resolvedStoragePath) ?: $resolvedStoragePath, $realStoragePath)) {
+            throw new \InvalidArgumentException('Invalid storage path.');
+        }
 
         // Store file
         Storage::disk($disk)->put($path, file_get_contents($file->getRealPath()));
@@ -65,7 +89,7 @@ class AttachmentService
             'metadata' => $metadata,
             'visibility' => $options['visibility'] ?? Attachment::VISIBILITY_ORGANIZATION,
             'expires_at' => $options['expires_at'] ?? null,
-            'uploaded_by' => auth()->id(),
+            'uploaded_by' => $userId,
         ]);
 
         // Generate thumbnail if image
@@ -83,13 +107,14 @@ class AttachmentService
         array $files,
         ?Model $attachable = null,
         ?int $organizationId = null,
-        array $options = []
+        array $options = [],
+        int $userId = 0
     ): array {
         $attachments = [];
 
         foreach ($files as $file) {
             if ($file instanceof UploadedFile) {
-                $attachments[] = $this->upload($file, $attachable, $organizationId, $options);
+                $attachments[] = $this->upload($file, $attachable, $organizationId, $options, $userId);
             }
         }
 
@@ -104,9 +129,13 @@ class AttachmentService
         string $originalName,
         ?Model $attachable = null,
         ?int $organizationId = null,
-        array $options = []
+        array $options = [],
+        int $userId = 0
     ): Attachment {
         $organizationId = $organizationId ?? auth()->user()?->organization_id;
+        if ($userId === 0) {
+            $userId = (int) auth()->id();
+        }
 
         if (!file_exists($sourcePath)) {
             throw new \RuntimeException("Source file not found: {$sourcePath}");
@@ -138,14 +167,14 @@ class AttachmentService
             'metadata' => $options['metadata'] ?? null,
             'visibility' => $options['visibility'] ?? Attachment::VISIBILITY_ORGANIZATION,
             'expires_at' => $options['expires_at'] ?? null,
-            'uploaded_by' => auth()->id(),
+            'uploaded_by' => $userId,
         ]);
     }
 
     /**
      * Attach existing attachment to a different model.
      */
-    public function attachTo(Attachment $attachment, Model $attachable): Attachment
+    public function attachTo(Attachment $attachment, Model $attachable, int $userId): Attachment
     {
         // Create a copy if already attached to something else
         if ($attachment->attachable_id && $attachment->attachable_id !== $attachable->id) {
@@ -171,7 +200,7 @@ class AttachmentService
                 'description' => $attachment->description,
                 'metadata' => $attachment->metadata,
                 'visibility' => $attachment->visibility,
-                'uploaded_by' => auth()->id(),
+                'uploaded_by' => $userId,
             ]);
         }
 
@@ -263,6 +292,12 @@ class AttachmentService
      */
     protected function validateFile(UploadedFile $file, string $category): void
     {
+        // Check MIME type against global allowlist
+        $mimeType = $file->getMimeType();
+        if (!in_array($mimeType, self::ALLOWED_MIME_TYPES, true)) {
+            throw new \InvalidArgumentException("File type not allowed: {$mimeType}");
+        }
+
         // Check file size
         $maxSize = Attachment::MAX_FILE_SIZES[$category] ?? Attachment::MAX_FILE_SIZES['default'];
         if ($file->getSize() > $maxSize) {

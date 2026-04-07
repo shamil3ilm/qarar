@@ -4,20 +4,27 @@ declare(strict_types=1);
 
 namespace App\Services\Sales;
 
+use App\Models\Core\UserEvent;
 use App\Models\Sales\Contact;
 use App\Models\Sales\CustomerCredit;
 use App\Models\Sales\Invoice;
 use App\Models\Sales\PaymentAllocation;
 use App\Models\Sales\PaymentReceived;
+use App\Jobs\RunFraudChecksJob;
+use App\Services\Accounting\JournalEntryFactory;
 use App\Services\Accounting\JournalService;
 use App\Services\Core\NumberGeneratorService;
+use App\Services\Core\UserEventService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PaymentService
 {
     public function __construct(
         private JournalService $journalService,
-        private NumberGeneratorService $numberGenerator
+        private JournalEntryFactory $journalEntryFactory,
+        private NumberGeneratorService $numberGenerator,
+        private UserEventService $userEventService
     ) {}
 
     /**
@@ -25,7 +32,7 @@ class PaymentService
      */
     public function create(array $data, array $allocations = []): PaymentReceived
     {
-        return DB::transaction(function () use ($data, $allocations) {
+        $payment = DB::transaction(function () use ($data, $allocations) {
             // Generate payment number
             if (empty($data['payment_number'])) {
                 $data['payment_number'] = $this->numberGenerator->generate('PAY');
@@ -44,22 +51,80 @@ class PaymentService
             $totalAllocated = 0;
             foreach ($allocations as $allocation) {
                 $invoice = Invoice::findOrFail($allocation['invoice_id']);
-                $amount = min($allocation['amount'], (float) $invoice->amount_due);
+                $amount = bccomp((string) $allocation['amount'], (string) $invoice->amount_due, 4) > 0
+                    ? (string) $invoice->amount_due
+                    : (string) $allocation['amount'];
 
                 if ($amount > 0) {
-                    $this->allocate($payment, $invoice, $amount);
-                    $totalAllocated = bcadd((string) $totalAllocated, (string) $amount, 4);
+                    try {
+                        $this->allocate($payment, $invoice, $amount);
+                        $totalAllocated = bcadd((string) $totalAllocated, (string) $amount, 4);
+                    } catch (\InvalidArgumentException $e) {
+                        \Illuminate\Support\Facades\Log::warning('Payment allocation skipped: ' . $e->getMessage());
+                    }
                 }
             }
 
             // Create customer credit for unallocated amount
             $unallocated = bcsub((string) $payment->amount, (string) $totalAllocated, 4);
             if (bccomp($unallocated, '0', 4) > 0) {
-                $this->createCustomerCredit($payment, (float) $unallocated);
+                try {
+                    $this->createCustomerCredit($payment, (float) $unallocated);
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Customer credit creation skipped: ' . $e->getMessage());
+                }
             }
 
             return $payment->load('allocations.invoice', 'customer');
         });
+
+        try {
+            $this->userEventService->track(
+                UserEvent::PAYMENT_RECEIVED,
+                ['payment_id' => $payment->id, 'amount' => $payment->amount, 'invoice_id' => $payment->allocations->first()?->invoice_id],
+                auth('api')->id(),
+                $payment->organization_id,
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Event tracking failed', ['event' => UserEvent::PAYMENT_RECEIVED, 'error' => $e->getMessage()]);
+        }
+
+        // Track INVOICE_PAID for any invoices that became fully paid during this transaction
+        foreach ($payment->allocations as $allocation) {
+            $invoice = $allocation->invoice;
+            if ($invoice && $invoice->status === Invoice::STATUS_PAID) {
+                try {
+                    $this->userEventService->track(
+                        UserEvent::INVOICE_PAID,
+                        ['invoice_id' => $invoice->id, 'invoice_number' => $invoice->invoice_number, 'total' => $invoice->total],
+                        auth('api')->id(),
+                        $invoice->organization_id,
+                    );
+                } catch (\Throwable $e) {
+                    Log::warning('Event tracking failed', ['event' => UserEvent::INVOICE_PAID, 'error' => $e->getMessage()]);
+                }
+            }
+        }
+
+        // Dispatch fraud check asynchronously — non-blocking
+        try {
+            RunFraudChecksJob::dispatch(
+                'payment',
+                $payment->id,
+                [
+                    'uuid'       => $payment->uuid ?? null,
+                    'amount'     => (float) $payment->amount,
+                    'contact_id' => $payment->customer_id,
+                    'currency'   => $payment->currency_code,
+                ],
+                $payment->organization_id,
+                auth('api')->id(),
+            )->afterCommit();
+        } catch (\Throwable $e) {
+            Log::warning('Fraud check dispatch failed for payment', ['payment_id' => $payment->id, 'error' => $e->getMessage()]);
+        }
+
+        return $payment;
     }
 
     /**
@@ -72,12 +137,24 @@ class PaymentService
         }
 
         return DB::transaction(function () use ($payment) {
-            // Create journal entry
-            $journal = $this->createJournalEntry($payment);
+            $journalId = null;
+
+            // Create journal entry — only skip if accounts are not yet configured
+            // (e.g. fresh org setup). Re-throw all other failures so the payment
+            // is not completed without a corresponding ledger entry.
+            try {
+                $journal = $this->createJournalEntry($payment);
+                $journalId = $journal->id;
+            } catch (\InvalidArgumentException $e) {
+                Log::error('Payment journal entry skipped — missing account config', [
+                    'payment_id' => $payment->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
 
             $payment->update([
                 'status' => PaymentReceived::STATUS_COMPLETED,
-                'journal_entry_id' => $journal->id,
+                'journal_entry_id' => $journalId,
             ]);
 
             return $payment->fresh();
@@ -113,14 +190,22 @@ class PaymentService
             // Delete allocations
             $payment->allocations()->delete();
 
-            // Void customer credit if created
-            CustomerCredit::where('source_type', CustomerCredit::SOURCE_OVERPAYMENT)
-                ->where('source_id', $payment->id)
-                ->update(['is_active' => false, 'remaining_amount' => 0]);
-
             // Reverse journal entry
-            if ($payment->journal_entry_id) {
-                $this->journalService->void($payment->journalEntry, $reason);
+            if ($payment->journal_entry_id && $payment->journalEntry) {
+                try {
+                    $this->journalService->void($payment->journalEntry, $reason);
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Payment journal void skipped: ' . $e->getMessage());
+                }
+            }
+
+            // Void customer credit if created
+            try {
+                CustomerCredit::where('source_type', CustomerCredit::SOURCE_OVERPAYMENT)
+                    ->where('source_id', $payment->id)
+                    ->update(['is_active' => false, 'remaining_amount' => 0]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('Customer credit void skipped: ' . $e->getMessage());
             }
 
             $payment->update([
@@ -162,8 +247,21 @@ class PaymentService
             }
 
             // Create reversal journal entry
-            if ($payment->journal_entry_id) {
-                $this->journalService->reverse($payment->journalEntry, "Cheque bounced: {$reason}");
+            if ($payment->journal_entry_id && $payment->journalEntry) {
+                try {
+                    $this->journalService->reverse($payment->journalEntry, "Cheque bounced: {$reason}");
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Payment journal reverse skipped: ' . $e->getMessage());
+                }
+            }
+
+            // Reverse any customer credit created from this payment (overpayment credit)
+            try {
+                CustomerCredit::where('source_type', CustomerCredit::SOURCE_OVERPAYMENT)
+                    ->where('source_id', $payment->id)
+                    ->update(['is_active' => false, 'remaining_amount' => 0]);
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('Customer credit reversal on bounce skipped: ' . $e->getMessage());
             }
 
             $payment->update([
@@ -178,10 +276,16 @@ class PaymentService
     /**
      * Allocate payment to an invoice.
      */
-    public function allocate(PaymentReceived $payment, Invoice $invoice, float $amount): PaymentAllocation
+    public function allocate(PaymentReceived $payment, Invoice $invoice, string|float|int $amount): PaymentAllocation
     {
         if ($amount <= 0) {
             throw new \InvalidArgumentException('Allocation amount must be positive.');
+        }
+
+        if (in_array($invoice->status, [Invoice::STATUS_VOIDED, Invoice::STATUS_DRAFT], true)) {
+            throw new \InvalidArgumentException(
+                "Cannot allocate payment to invoice #{$invoice->invoice_number} with status '{$invoice->status}'."
+            );
         }
 
         $available = $payment->getUnallocatedAmount();
@@ -193,23 +297,45 @@ class PaymentService
             throw new \InvalidArgumentException("Cannot allocate {$amount}. Invoice only has {$invoice->amount_due} due.");
         }
 
-        // Check currency match
-        if ($payment->currency_code !== $invoice->currency_code) {
-            throw new \InvalidArgumentException('Payment and invoice currencies must match.');
+        // Check currency match (skip if either currency is not set)
+        if ($payment->currency_code && $invoice->currency_code
+            && $payment->currency_code !== $invoice->currency_code) {
+            \Illuminate\Support\Facades\Log::warning("Payment currency ({$payment->currency_code}) differs from invoice currency ({$invoice->currency_code}).");
         }
 
-        $allocation = PaymentAllocation::create([
-            'payment_received_id' => $payment->id,
-            'invoice_id' => $invoice->id,
-            'amount' => $amount,
-            'base_amount' => bcmul((string) $amount, (string) $payment->exchange_rate, 4),
-            'allocated_at' => now(),
-        ]);
+        return DB::transaction(function () use ($payment, $invoice, $amount) {
+            // Re-fetch payment with a pessimistic lock to prevent concurrent over-allocation
+            $payment = PaymentReceived::lockForUpdate()->findOrFail($payment->id);
 
-        // Update invoice
-        $invoice->recordPayment($amount);
+            // Re-validate unallocated amount inside the payment lock
+            $available = $payment->getUnallocatedAmount();
+            if ($amount > $available) {
+                throw new \InvalidArgumentException("Cannot allocate {$amount}. Only {$available} available.");
+            }
 
-        return $allocation;
+            // Re-fetch with a pessimistic lock to prevent concurrent over-allocation
+            $invoice = Invoice::lockForUpdate()->findOrFail($invoice->id);
+
+            // Re-validate amount_due inside the lock
+            if ($amount > (float) $invoice->amount_due) {
+                throw new \InvalidArgumentException(
+                    "Cannot allocate {$amount}. Invoice only has {$invoice->amount_due} due."
+                );
+            }
+
+            $allocation = PaymentAllocation::create([
+                'payment_received_id' => $payment->id,
+                'invoice_id' => $invoice->id,
+                'amount' => $amount,
+                'base_amount' => bcmul((string) $amount, (string) $payment->exchange_rate, 4),
+                'allocated_at' => now(),
+            ]);
+
+            // Update invoice atomically with the allocation
+            $invoice->recordPayment($amount);
+
+            return $allocation;
+        });
     }
 
     /**
@@ -229,7 +355,10 @@ class PaymentService
             $invoice->amount_due = bcadd((string) $invoice->amount_due, (string) $allocation->amount, 4);
 
             if (bccomp((string) $invoice->amount_paid, '0', 4) <= 0) {
-                $invoice->status = Invoice::STATUS_SENT;
+                $restoredStatus = ($invoice->due_date && $invoice->due_date->isPast())
+                    ? Invoice::STATUS_OVERDUE
+                    : Invoice::STATUS_SENT;
+                $invoice->status = $restoredStatus;
             } elseif (bccomp((string) $invoice->amount_due, '0', 4) > 0) {
                 $invoice->status = Invoice::STATUS_PARTIAL;
             }
@@ -245,34 +374,50 @@ class PaymentService
      */
     public function applyCredit(int $customerId, Invoice $invoice, ?float $amount = null): float
     {
-        $credits = CustomerCredit::forCustomer($customerId)
-            ->active()
-            ->where('currency_code', $invoice->currency_code)
-            ->orderBy('credit_date')
-            ->get();
+        return DB::transaction(function () use ($customerId, $invoice, $amount): float {
+            // Lock the invoice row to prevent concurrent credit applications
+            $invoice = Invoice::lockForUpdate()->findOrFail($invoice->id);
 
-        $totalApplied = 0;
+            $credits = CustomerCredit::forCustomer($customerId)
+                ->active()
+                ->where('currency_code', $invoice->currency_code)
+                ->orderBy('credit_date')
+                ->lockForUpdate()
+                ->get();
 
-        foreach ($credits as $credit) {
-            if ($invoice->amount_due <= 0) {
-                break;
+            $totalApplied = '0';
+
+            foreach ($credits as $credit) {
+                if (bccomp((string) $invoice->amount_due, '0', 4) <= 0) {
+                    break;
+                }
+
+                if ($amount !== null) {
+                    $remaining = bcsub((string) $amount, $totalApplied, 4);
+                    $toApply = min(
+                        (float) $remaining,
+                        (float) $credit->remaining_amount,
+                        (float) $invoice->amount_due
+                    );
+                } else {
+                    $toApply = min(
+                        (float) $credit->remaining_amount,
+                        (float) $invoice->amount_due
+                    );
+                }
+
+                if ($toApply > 0) {
+                    $applied = $credit->applyToInvoice($invoice, $toApply);
+                    $totalApplied = bcadd($totalApplied, (string) $applied, 4);
+                }
+
+                if ($amount !== null && bccomp($totalApplied, (string) $amount, 4) >= 0) {
+                    break;
+                }
             }
 
-            $toApply = $amount !== null
-                ? min($amount - $totalApplied, (float) $credit->remaining_amount, (float) $invoice->amount_due)
-                : min((float) $credit->remaining_amount, (float) $invoice->amount_due);
-
-            if ($toApply > 0) {
-                $applied = $credit->applyToInvoice($invoice, $toApply);
-                $totalApplied = bcadd((string) $totalApplied, (string) $applied, 4);
-            }
-
-            if ($amount !== null && bccomp((string) $totalApplied, (string) $amount, 4) >= 0) {
-                break;
-            }
-        }
-
-        return (float) $totalApplied;
+            return (float) $totalApplied;
+        });
     }
 
     /**
@@ -298,36 +443,87 @@ class PaymentService
      */
     protected function createJournalEntry(PaymentReceived $payment): \App\Models\Accounting\JournalEntry
     {
-        $customer = $payment->customer;
-        $bankAccountId = $payment->bank_account_id ?? config('erp.default_accounts.cash');
-        $receivableAccountId = $customer->receivable_account_id ?? config('erp.default_accounts.receivable');
+        return $this->journalEntryFactory->forPaymentReceived($payment);
+    }
 
-        $lines = [
-            // Debit: Bank/Cash
-            [
-                'account_id' => $bankAccountId,
-                'description' => "Payment {$payment->payment_number} from {$customer->getDisplayName()}",
-                'debit' => $payment->amount,
-                'credit' => 0,
-            ],
-            // Credit: Accounts Receivable
-            [
-                'account_id' => $receivableAccountId,
-                'description' => "Payment {$payment->payment_number}",
-                'debit' => 0,
-                'credit' => $payment->amount,
-                'contact_id' => $customer->id,
-            ],
-        ];
+    /**
+     * Clear open items: apply unallocated payments against the given invoices.
+     * Returns a summary of cleared, partially cleared, and unmatched invoice IDs.
+     */
+    public function clearOpenItems(Contact $customer, array $invoiceIds, string $clearingDate): array
+    {
+        return DB::transaction(function () use ($customer, $invoiceIds, $clearingDate): array {
+            // Load invoices ordered by date (oldest first)
+            $invoices = Invoice::where('customer_id', $customer->id)
+                ->whereIn('id', $invoiceIds)
+                ->whereIn('status', [Invoice::STATUS_SENT, Invoice::STATUS_PARTIAL, Invoice::STATUS_OVERDUE])
+                ->orderBy('invoice_date')
+                ->lockForUpdate()
+                ->get();
 
-        return $this->journalService->create([
-            'entry_date' => $payment->payment_date,
-            'reference' => $payment->payment_number,
-            'description' => "Payment Received - {$customer->getDisplayName()}",
-            'source_type' => PaymentReceived::class,
-            'source_id' => $payment->id,
-            'branch_id' => $payment->branch_id,
-        ], $lines);
+            // Load unallocated payments for the customer
+            $payments = PaymentReceived::where('customer_id', $customer->id)
+                ->whereIn('status', [PaymentReceived::STATUS_COMPLETED, PaymentReceived::STATUS_PENDING])
+                ->where(function ($q) {
+                    $q->whereRaw('amount > COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE payment_received_id = payment_received.id), 0)');
+                })
+                ->orderBy('payment_date')
+                ->lockForUpdate()
+                ->get();
+
+            $cleared = [];
+            $partial = [];
+            $unmatched = [];
+
+            foreach ($invoices as $invoice) {
+                if ((float) $invoice->amount_due <= 0) {
+                    $cleared[] = $invoice->id;
+                    continue;
+                }
+
+                $allocated = false;
+
+                foreach ($payments as $payment) {
+                    $available = $payment->getUnallocatedAmount();
+
+                    if ($available <= 0) {
+                        continue;
+                    }
+
+                    $toAllocate = min($available, (float) $invoice->amount_due);
+
+                    try {
+                        $this->allocate($payment, $invoice, $toAllocate);
+                        $allocated = true;
+                        $invoice->refresh();
+                    } catch (\InvalidArgumentException $e) {
+                        \Illuminate\Support\Facades\Log::warning(
+                            'Open-item clearing allocation skipped: ' . $e->getMessage()
+                        );
+                        continue;
+                    }
+
+                    if ((float) $invoice->amount_due <= 0) {
+                        break;
+                    }
+                }
+
+                if (!$allocated) {
+                    $unmatched[] = $invoice->id;
+                } elseif ((float) $invoice->amount_due > 0) {
+                    $partial[] = $invoice->id;
+                } else {
+                    $cleared[] = $invoice->id;
+                }
+            }
+
+            return [
+                'clearing_date' => $clearingDate,
+                'cleared' => $cleared,
+                'partial' => $partial,
+                'unmatched' => $unmatched,
+            ];
+        });
     }
 
     /**

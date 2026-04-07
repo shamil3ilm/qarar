@@ -7,6 +7,8 @@ namespace App\Services\HR;
 use App\Models\HR\Employee;
 use App\Models\HR\EmployeeSalary;
 use App\Models\HR\EmployeeSalaryComponent;
+use App\Models\HR\EmployeeShiftAssignment;
+use App\Models\HR\LeaveRequest;
 use App\Models\HR\SalaryStructure;
 use App\Services\Core\NumberGeneratorService;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +31,10 @@ class EmployeeService
 
             if (empty($data['display_name'])) {
                 $data['display_name'] = trim("{$data['first_name']} {$data['last_name']}");
+            }
+
+            if (empty($data['employment_status'])) {
+                $data['employment_status'] = Employee::STATUS_ACTIVE;
             }
 
             $employee = Employee::create($data);
@@ -77,11 +83,14 @@ class EmployeeService
                     'effective_to' => $effectiveFrom,
                 ]);
 
+            // Fetch components once — reuse for totals and component records.
+            $structureComponents = $structure->components()->with('salaryComponent')->get();
+
             // Calculate totals
             $grossSalary = 0;
             $totalDeductions = 0;
 
-            foreach ($structure->components()->with('salaryComponent')->get() as $structureComponent) {
+            foreach ($structureComponents as $structureComponent) {
                 $component = $structureComponent->salaryComponent;
                 $amount = $componentAmounts[$component->code] ?? $structureComponent->value ?? $component->default_value;
 
@@ -108,8 +117,8 @@ class EmployeeService
                 'is_current' => true,
             ]);
 
-            // Create component amounts
-            foreach ($structure->components()->with('salaryComponent')->get() as $structureComponent) {
+            // Create component amounts — reuse already-loaded collection.
+            foreach ($structureComponents as $structureComponent) {
                 $component = $structureComponent->salaryComponent;
                 $amount = $componentAmounts[$component->code] ?? $structureComponent->value ?? $component->default_value;
 
@@ -144,6 +153,24 @@ class EmployeeService
                     'is_current' => false,
                     'effective_to' => $terminationDate,
                 ]);
+
+            // Cancel all pending or approved future leave requests — iterate so HasAuditTrail fires.
+            LeaveRequest::where('employee_id', $employee->id)
+                ->whereIn('status', [LeaveRequest::STATUS_PENDING, LeaveRequest::STATUS_APPROVED])
+                ->whereDate('from_date', '>', now())
+                ->each(fn (LeaveRequest $lr) => $lr->update([
+                    'status'           => LeaveRequest::STATUS_CANCELLED,
+                    'rejection_reason' => 'Employee terminated',
+                ]));
+
+            // Delete future shift assignments (table may not exist in all environments)
+            try {
+                EmployeeShiftAssignment::where('employee_id', $employee->id)
+                    ->whereDate('effective_from', '>', now())
+                    ->delete();
+            } catch (\Throwable) {
+                // Ignore if shift assignments table not yet created
+            }
 
             return $employee->fresh();
         });
@@ -190,8 +217,10 @@ class EmployeeService
     public function getExpiringDocuments(int $daysThreshold = 30): \Illuminate\Support\Collection
     {
         $checkDate = now()->addDays($daysThreshold);
+        $orgId = auth()->user()->organization_id;
 
         $employees = Employee::active()
+            ->where('organization_id', $orgId)
             ->where(function ($q) use ($checkDate) {
                 $q->whereNotNull('passport_expiry')->where('passport_expiry', '<=', $checkDate)
                     ->orWhere(function ($q2) use ($checkDate) {
@@ -201,6 +230,7 @@ class EmployeeService
                         $q3->whereNotNull('work_permit_expiry')->where('work_permit_expiry', '<=', $checkDate);
                     });
             })
+            ->limit(500)
             ->get();
 
         $results = collect();
@@ -236,15 +266,53 @@ class EmployeeService
     }
 
     /**
+     * Reactivate a terminated employee (rehire workflow).
+     */
+    public function reactivate(Employee $employee, array $data): Employee
+    {
+        if ($employee->employment_status !== Employee::STATUS_TERMINATED) {
+            throw new \DomainException('Only terminated employees can be reactivated.');
+        }
+
+        if (empty($data['rehire_date'])) {
+            throw new \DomainException('rehire_date is required for reactivation.');
+        }
+
+        $rehireDate = new \DateTime($data['rehire_date']);
+
+        if ($employee->termination_date && $rehireDate <= $employee->termination_date) {
+            throw new \DomainException('rehire_date must be after the employee\'s termination date.');
+        }
+
+        return DB::transaction(function () use ($employee, $data, $rehireDate): Employee {
+            $employee->update([
+                'previous_termination_date' => $employee->termination_date,
+                'rehire_count'              => ($employee->rehire_count ?? 0) + 1,
+                'employment_status'         => Employee::STATUS_ACTIVE,
+                'joining_date'              => $rehireDate,
+                'rehire_date'               => $rehireDate,
+                'termination_date'          => null,
+                'termination_reason'        => null,
+                'is_active'                 => true,
+            ]);
+
+            return $employee->fresh();
+        });
+    }
+
+    /**
      * Get employee statistics.
      */
     public function getStatistics(): array
     {
-        $active = Employee::active()->count();
-        $onNotice = Employee::where('employment_status', Employee::STATUS_ON_NOTICE)->count();
-        $onProbation = Employee::onProbation()->count();
+        $orgId = auth()->user()->organization_id;
+
+        $active = Employee::active()->where('organization_id', $orgId)->count();
+        $onNotice = Employee::where('organization_id', $orgId)->where('employment_status', Employee::STATUS_ON_NOTICE)->count();
+        $onProbation = Employee::onProbation()->where('organization_id', $orgId)->count();
 
         $byDepartment = Employee::active()
+            ->where('organization_id', $orgId)
             ->selectRaw('department_id, count(*) as count')
             ->groupBy('department_id')
             ->with('department:id,name')
@@ -252,11 +320,13 @@ class EmployeeService
             ->mapWithKeys(fn($row) => [$row->department?->name ?? 'Unassigned' => $row->count]);
 
         $byEmploymentType = Employee::active()
+            ->where('organization_id', $orgId)
             ->selectRaw('employment_type, count(*) as count')
             ->groupBy('employment_type')
             ->pluck('count', 'employment_type');
 
         $joinedThisMonth = Employee::active()
+            ->where('organization_id', $orgId)
             ->whereBetween('joining_date', [now()->startOfMonth(), now()->endOfMonth()])
             ->count();
 

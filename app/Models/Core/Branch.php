@@ -34,11 +34,15 @@ class Branch extends Model
         'compliance_status',
         'is_default',
         'is_active',
+        'zatca_branch_id',
+        'zatca_onboarding_status',
+        'zatca_certificate_expires_at',
     ];
 
     protected $casts = [
         'is_default' => 'boolean',
         'is_active' => 'boolean',
+        'zatca_certificate_expires_at' => 'datetime',
     ];
 
     protected $hidden = [

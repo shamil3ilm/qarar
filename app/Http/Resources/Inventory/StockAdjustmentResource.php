@@ -14,6 +14,7 @@ class StockAdjustmentResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'adjustment_number' => $this->adjustment_number,
             'adjustment_date' => $this->adjustment_date?->toDateString(),
             'reason' => $this->reason,

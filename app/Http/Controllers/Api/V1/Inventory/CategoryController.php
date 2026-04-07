@@ -9,30 +9,21 @@ use App\Http\Resources\Inventory\CategoryResource;
 use App\Models\Inventory\Category;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class CategoryController extends Controller
 {
     /**
      * List categories as tree or flat.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
-        $query = Category::query();
+        $query = Category::query()
+            ->when($request->boolean('tree'), fn($q) => $q->whereNull('parent_id')->with('allChildren'))
+            ->when($request->boolean('active_only'), fn($q) => $q->active());
 
-        if ($request->boolean('tree', true)) {
-            $query->whereNull('parent_id')->with('allChildren');
-        }
+        $categories = $query->get();
 
-        if ($request->boolean('active_only', false)) {
-            $query->active();
-        }
-
-        $categories = $request->boolean('paginate', false)
-            ? $query->paginate($request->integer('per_page', 15))
-            : $query->get();
-
-        return CategoryResource::collection($categories);
+        return $this->success(CategoryResource::collection($categories));
     }
 
     /**
@@ -55,11 +46,7 @@ class CategoryController extends Controller
 
         $category = Category::create($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Category created successfully.',
-            'data' => new CategoryResource($category),
-        ], 201);
+        return $this->created(new CategoryResource($category), 'Category created successfully.');
     }
 
     /**
@@ -69,10 +56,7 @@ class CategoryController extends Controller
     {
         $category->load(['parent', 'children', 'products']);
 
-        return response()->json([
-            'success' => true,
-            'data' => new CategoryResource($category),
-        ]);
+        return $this->success(new CategoryResource($category));
     }
 
     /**
@@ -92,33 +76,18 @@ class CategoryController extends Controller
         // Prevent setting parent to self or descendant
         if (isset($validated['parent_id'])) {
             if ($validated['parent_id'] === $category->id) {
-                return response()->json([
-                    'success' => false,
-                    'error' => [
-                        'code' => 'VALIDATION_ERROR',
-                        'message' => 'Category cannot be its own parent.',
-                    ],
-                ], 422);
+                return $this->error('Category cannot be its own parent.', 'VALIDATION_ERROR', 422);
             }
 
-            if ($category->isAncestorOf($validated['parent_id'])) {
-                return response()->json([
-                    'success' => false,
-                    'error' => [
-                        'code' => 'VALIDATION_ERROR',
-                        'message' => 'Cannot set a descendant as parent.',
-                    ],
-                ], 422);
+            $candidateParent = Category::find($validated['parent_id']);
+            if ($candidateParent && $category->isAncestorOf($candidateParent)) {
+                return $this->error('Cannot set a descendant as parent.', 'VALIDATION_ERROR', 422);
             }
         }
 
         $category->update($validated);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Category updated successfully.',
-            'data' => new CategoryResource($category->fresh()),
-        ]);
+        return $this->success(new CategoryResource($category->fresh()), 'Category updated successfully.');
     }
 
     /**
@@ -128,32 +97,17 @@ class CategoryController extends Controller
     {
         // Check for products
         if ($category->products()->count() > 0) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot delete category with products. Move products first.',
-                ],
-            ], 422);
+            return $this->error('Cannot delete category with products. Move products first.', 'VALIDATION_ERROR', 422);
         }
 
         // Check for children
         if ($category->children()->count() > 0) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot delete category with subcategories.',
-                ],
-            ], 422);
+            return $this->error('Cannot delete category with subcategories.', 'VALIDATION_ERROR', 422);
         }
 
         $category->delete();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Category deleted successfully.',
-        ]);
+        return $this->success(null, 'Category deleted successfully.');
     }
 
     /**
@@ -168,31 +122,16 @@ class CategoryController extends Controller
         $newParentId = $request->input('parent_id');
 
         if ($newParentId === $category->id) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Category cannot be its own parent.',
-                ],
-            ], 422);
+            return $this->error('Category cannot be its own parent.', 'VALIDATION_ERROR', 422);
         }
 
-        if ($newParentId && $category->isAncestorOf($newParentId)) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'VALIDATION_ERROR',
-                    'message' => 'Cannot move category under its own descendant.',
-                ],
-            ], 422);
+        $newParent = $newParentId ? Category::find($newParentId) : null;
+        if ($newParent && $category->isAncestorOf($newParent)) {
+            return $this->error('Cannot move category under its own descendant.', 'VALIDATION_ERROR', 422);
         }
 
         $category->update(['parent_id' => $newParentId]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Category moved successfully.',
-            'data' => new CategoryResource($category->fresh(['parent'])),
-        ]);
+        return $this->success(new CategoryResource($category->fresh(['parent'])), 'Category moved successfully.');
     }
 }

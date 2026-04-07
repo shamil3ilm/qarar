@@ -1,7 +1,9 @@
 <?php
 
+use App\Jobs\ProcessRecurringTransactions;
 use App\Services\Auth\LoginAttemptService;
 use App\Services\Auth\TokenBlacklistService;
+use App\Services\Core\FinancialIdempotencyService;
 use App\Services\Core\UserLifecycleService;
 use App\Services\Security\IdempotencyService;
 use Illuminate\Foundation\Inspiring;
@@ -39,6 +41,11 @@ Artisan::command('security:cleanup-sessions', function (UserLifecycleService $se
     $this->info("Cleaned up {$deleted} expired user sessions.");
 })->purpose('Remove expired user sessions');
 
+Artisan::command('financial:cleanup-idempotency', function (FinancialIdempotencyService $service) {
+    $deleted = $service->cleanup();
+    $this->info("Cleaned up {$deleted} expired financial idempotency keys.");
+})->purpose('Remove expired financial idempotency keys');
+
 Artisan::command('security:cleanup-all', function () {
     $this->call('security:cleanup-tokens');
     $this->call('security:cleanup-login-attempts');
@@ -53,6 +60,7 @@ Artisan::command('security:cleanup-all', function () {
 */
 
 Schedule::command('security:cleanup-all')->daily()->at('03:00');
+Schedule::command('financial:cleanup-idempotency')->daily()->at('03:15');
 Schedule::command('audit-logs:cleanup --days=90')->weekly()->sundays()->at('04:00');
 
 // Scheduled Reports
@@ -67,3 +75,24 @@ Schedule::command('exports:cleanup')->daily()->at('02:00');
 // Webhook processing
 Schedule::command('webhooks:process --retry')->everyFiveMinutes();
 Schedule::command('webhooks:process --cleanup --days=30')->daily()->at('03:30');
+
+// Segment membership reevaluation
+Schedule::job(new \App\Jobs\ReevaluateSegmentMembershipsJob())->daily()->at('01:00');
+
+// User cluster assignments (rule-based)
+Schedule::job(new \App\Jobs\ClusterUsersJob())->dailyAt('02:00');
+
+// Recurring transactions (invoices, bills, etc.)
+Schedule::job(new ProcessRecurringTransactions())->daily()->name('process-recurring-transactions')->withoutOverlapping();
+
+// Overdue status transitions — run every hour so invoices/bills flip within the hour they become due
+Schedule::command('invoices:mark-overdue')->hourly();
+Schedule::command('bills:mark-overdue')->hourly();
+
+// Archive old completed records to keep hot tables lean
+Schedule::command('erp:archive')->weekly()->at('02:00');
+
+// Token blacklist cleanup — removes expired entries from the blacklist table
+Schedule::call(function () {
+    app(\App\Services\Auth\TokenBlacklistService::class)->cleanupExpired();
+})->hourly()->name('token-blacklist-cleanup')->withoutOverlapping();

@@ -194,7 +194,7 @@ return new class extends Migration
             $table->json('data'); // Full dashboard data snapshot
             $table->timestamp('created_at');
 
-            $table->unique(['organization_id', 'snapshot_date', 'snapshot_type']);
+            $table->unique(['organization_id', 'snapshot_date', 'snapshot_type'], 'dashboard_snapshots_org_date_type_unique');
             $table->index(['organization_id', 'snapshot_date']);
         });
     }

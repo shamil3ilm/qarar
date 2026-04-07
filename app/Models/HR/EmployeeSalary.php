@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Models\HR;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class EmployeeSalary extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'employee_id',
         'salary_structure_id',

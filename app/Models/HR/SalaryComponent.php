@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class SalaryComponent extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, HasFactory;
 
     public const TYPE_EARNING = 'earning';
     public const TYPE_DEDUCTION = 'deduction';

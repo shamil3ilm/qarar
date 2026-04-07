@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models\Concerns;
 
-use InvalidArgumentException;
+use App\Exceptions\ERP\InvalidStateTransitionException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Trait for implementing state machine pattern.
@@ -51,7 +52,7 @@ trait HasStateMachine
     /**
      * Transition to a new state.
      *
-     * @throws InvalidArgumentException
+     * @throws InvalidStateTransitionException
      */
     public function transitionTo(string $newState, array $additionalData = []): bool
     {
@@ -59,43 +60,55 @@ trait HasStateMachine
             $currentState = $this->getState();
             $allowed = implode(', ', $this->getAllowedTransitions());
 
-            throw new InvalidArgumentException(
-                "Invalid state transition from '{$currentState}' to '{$newState}'. " .
-                "Allowed transitions: [{$allowed}]"
+            throw InvalidStateTransitionException::make(
+                entityType: class_basename(static::class),
+                currentState: $currentState,
+                targetState: $newState,
+                allowedTransitions: $this->getAllowedTransitions(),
             );
         }
 
         $oldState = $this->getState();
 
-        // Call before hook if exists
-        $beforeMethod = 'onBefore' . str_replace(' ', '', ucwords(str_replace('_', ' ', $newState)));
-        if (method_exists($this, $beforeMethod)) {
-            $this->$beforeMethod($oldState);
-        }
+        return DB::transaction(function () use ($newState, $additionalData, $oldState): bool {
+            // Call before hook if exists
+            $beforeMethod = 'onBefore' . str_replace(' ', '', ucwords(str_replace('_', ' ', $newState)));
+            if (method_exists($this, $beforeMethod)) {
+                $this->$beforeMethod($oldState);
+            }
 
-        // Update state
-        $data = array_merge($additionalData, [
-            $this->getStateColumn() => $newState,
-        ]);
+            // Update state
+            $data = array_merge($additionalData, [
+                $this->getStateColumn() => $newState,
+            ]);
 
-        $this->update($data);
+            $this->update($data);
 
-        // Call after hook if exists
-        $afterMethod = 'onAfter' . str_replace(' ', '', ucwords(str_replace('_', ' ', $newState)));
-        if (method_exists($this, $afterMethod)) {
-            $this->$afterMethod($oldState);
-        }
+            // Call after hook if exists
+            $afterMethod = 'onAfter' . str_replace(' ', '', ucwords(str_replace('_', ' ', $newState)));
+            if (method_exists($this, $afterMethod)) {
+                $this->$afterMethod($oldState);
+            }
 
-        return true;
+            return true;
+        });
     }
 
     /**
      * Force set state (bypass transition rules - use with caution).
      */
-    public function forceState(string $state): void
+    public function forceState(string $newState): void
     {
+        \Illuminate\Support\Facades\Log::warning('forceState() called — bypassing state machine validation', [
+            'model' => get_class($this),
+            'id' => $this->getKey(),
+            'from' => $this->{$this->getStateColumn()} ?? 'unknown',
+            'to' => $newState,
+            'user_id' => auth()->id(),
+        ]);
+
         $this->update([
-            $this->getStateColumn() => $state,
+            $this->getStateColumn() => $newState,
         ]);
     }
 
@@ -138,11 +151,11 @@ trait HasStateMachine
     /**
      * Override in model: Get the state column name.
      */
-    abstract public function getStateColumn(): string;
+    abstract protected function getStateColumn(): string;
 
     /**
      * Override in model: Define allowed state transitions.
      * Format: ['current_state' => ['allowed_state_1', 'allowed_state_2']]
      */
-    abstract public function getStateTransitions(): array;
+    abstract protected function getStateTransitions(): array;
 }

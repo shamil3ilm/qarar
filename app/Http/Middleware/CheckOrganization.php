@@ -14,16 +14,11 @@ class CheckOrganization
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $user = $request->user();
-
+        // ValidateJwtToken middleware has already authenticated the user on the
+        // api guard — re-use that resolved instance instead of re-parsing the JWT.
+        $user = auth('api')->user();
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'UNAUTHORIZED',
-                    'message' => 'Authentication required',
-                ],
-            ], 401);
+            return response()->json(['success' => false, 'error' => ['message' => 'Unauthenticated.']], 401);
         }
 
         // Super admins can access without organization
@@ -70,7 +65,12 @@ class CheckOrganization
         // Set branch context if provided in header
         $branchId = $request->header('X-Branch-Id');
         if ($branchId) {
+            // Scope the branch lookup to the user's own organisation to prevent
+            // cross-tenant branch access. The pivot already links user to branch,
+            // but explicitly filtering by organization_id closes any gap caused by
+            // bypassing the Eloquent global scope.
             $branch = $user->branches()
+                ->where('branches.organization_id', $user->organization_id)
                 ->where('branches.id', $branchId)
                 ->where('branches.is_active', true)
                 ->first();
@@ -89,7 +89,13 @@ class CheckOrganization
             }
         } else {
             // Use default branch if no branch specified
-            $defaultBranch = $user->getDefaultBranch();
+            $defaultBranch = $user->branches()
+                ->where('branches.organization_id', $user->organization_id)
+                ->wherePivot('is_default', true)
+                ->first()
+                ?? $user->branches()
+                    ->where('branches.organization_id', $user->organization_id)
+                    ->first();
             if ($defaultBranch) {
                 $request->attributes->set('branch', $defaultBranch);
             }

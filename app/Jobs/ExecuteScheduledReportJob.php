@@ -8,21 +8,29 @@ use App\Models\Reports\ReportExecution;
 use App\Models\Reports\SavedReport;
 use App\Services\Reports\ReportExportService;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 
-class ExecuteScheduledReportJob implements ShouldQueue
+class ExecuteScheduledReportJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
-    public int $backoff = 60;
+    public array $backoff = [60, 300, 600];
     public int $timeout = 600; // 10 minutes max
+    public int $uniqueFor = 3600;
+
+    public function uniqueId(): string
+    {
+        return $this->report->id . ':' . now()->format('Y-m-d-H');
+    }
 
     public function __construct(
         protected SavedReport $report,
@@ -31,13 +39,28 @@ class ExecuteScheduledReportJob implements ShouldQueue
 
     public function handle(ReportExportService $exportService): void
     {
-        $execution = ReportExecution::create([
+        // Idempotency: skip if a completed execution already exists within this job's timeout window
+        // (prevents duplicate reports when the scheduler dispatches the job twice)
+        $recentCompleted = ReportExecution::withoutGlobalScopes()
+            ->where('saved_report_id', $this->report->id)
+            ->where('status', ReportExecution::STATUS_COMPLETED)
+            ->where('started_at', '>=', now()->subSeconds($this->timeout))
+            ->exists();
+
+        if ($recentCompleted) {
+            Log::info('ExecuteScheduledReportJob: skipping duplicate dispatch — already completed', [
+                'report_id' => $this->report->id,
+            ]);
+            return;
+        }
+
+        $execution = ReportExecution::withoutGlobalScopes()->create([
             'saved_report_id' => $this->report->id,
             'organization_id' => $this->report->organization_id,
             'executed_by' => $this->userId,
             'parameters' => $this->report->parameters,
             'format' => $this->report->export_format,
-            'status' => 'processing',
+            'status' => ReportExecution::STATUS_PROCESSING,
             'started_at' => now(),
         ]);
 
@@ -69,17 +92,19 @@ class ExecuteScheduledReportJob implements ShouldQueue
 
             Storage::disk('local')->put($path, $result['content']);
 
-            $execution->markAsCompleted(
-                $path,
-                Storage::disk('local')->size($path),
-                $reportData['row_count'] ?? count($reportData['data'] ?? [])
-            );
+            DB::transaction(function () use ($execution, $path, $reportData) {
+                $execution->markAsCompleted(
+                    $path,
+                    Storage::disk('local')->size($path),
+                    $reportData['row_count'] ?? count($reportData['data'] ?? [])
+                );
 
-            // Update report's last run time
-            $this->report->update([
-                'last_run_at' => now(),
-                'next_run_at' => $this->calculateNextRun(),
-            ]);
+                // Update report's last run time
+                $this->report->update([
+                    'last_run_at' => now(),
+                    'next_run_at' => $this->calculateNextRun(),
+                ]);
+            });
 
             // Send email notifications if configured
             $this->sendNotifications($execution, $path);
@@ -188,23 +213,16 @@ class ExecuteScheduledReportJob implements ShouldQueue
             return null;
         }
 
+        $scheduleTime = $this->report->schedule_time ?? '06:00';
+        $timeParts = explode(':', $scheduleTime);
+        $hour = (int) ($timeParts[0] ?? 6);
+        $minute = (int) ($timeParts[1] ?? 0);
+
         return match ($this->report->schedule) {
-            'daily' => now()->addDay()->setTime(
-                (int) ($this->report->schedule_time ?? '06:00'),
-                0
-            ),
-            'weekly' => now()->addWeek()->startOfWeek()->setTime(
-                (int) ($this->report->schedule_time ?? '06:00'),
-                0
-            ),
-            'monthly' => now()->addMonth()->startOfMonth()->setTime(
-                (int) ($this->report->schedule_time ?? '06:00'),
-                0
-            ),
-            'quarterly' => now()->addQuarter()->startOfQuarter()->setTime(
-                (int) ($this->report->schedule_time ?? '06:00'),
-                0
-            ),
+            'daily' => now()->addDay()->setTime($hour, $minute),
+            'weekly' => now()->addWeek()->startOfWeek()->setTime($hour, $minute),
+            'monthly' => now()->addMonth()->startOfMonth()->setTime($hour, $minute),
+            'quarterly' => now()->addQuarter()->startOfQuarter()->setTime($hour, $minute),
             default => null,
         };
     }
@@ -226,6 +244,11 @@ class ExecuteScheduledReportJob implements ShouldQueue
         }
 
         try {
+            if (!Storage::disk('local')->exists($filePath)) {
+                Log::error('Report file missing', ['path' => $filePath]);
+                return;
+            }
+
             foreach ($recipients as $email) {
                 Mail::send(
                     'emails.reports.scheduled-report',

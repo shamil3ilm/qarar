@@ -10,18 +10,19 @@ use App\Models\CRM\Lead;
 use App\Services\CRM\LeadService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class LeadController extends Controller
 {
     public function __construct(
         private LeadService $leadService
-    ) {}
+    ) {
+    }
 
     /**
      * List leads with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = Lead::with(['leadSource', 'assignee', 'branch'])
             ->when($request->status, fn($q, $status) => $q->where('status', $status))
@@ -38,13 +39,14 @@ class LeadController extends Controller
                         ->orWhere('email', 'like', "%{$search}%");
                 });
             })
-            ->orderBy($request->sort_by ?? 'created_at', $request->sort_order ?? 'desc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['title', 'status', 'created_at', 'updated_at', 'expected_close_date', 'lead_value'], 'created_at'),
+                $this->safeSortOrder($request->sort_order, 'desc')
+            );
 
-        $leads = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        $leads = $query->paginate($request->integer('per_page', 15));
 
-        return LeadResource::collection($leads);
+        return $this->paginated($leads, LeadResource::class);
     }
 
     /**
@@ -72,34 +74,32 @@ class LeadController extends Controller
             'state' => 'nullable|string|max:100',
             'postal_code' => 'nullable|string|max:20',
             'country_code' => 'nullable|string|size:2',
-            'lead_source_id' => 'nullable|exists:lead_sources,id',
+            'lead_source_id' => ['nullable', Rule::exists('lead_sources', 'id')->where('organization_id', auth()->user()->organization_id)],
             'source_details' => 'nullable|string|max:200',
-            'assigned_to' => 'nullable|exists:users,id',
-            'branch_id' => 'nullable|exists:branches,id',
+            'assigned_to' => ['nullable', Rule::exists('users', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'branch_id' => ['nullable', Rule::exists('branches', 'id')->where('organization_id', auth()->user()->organization_id)],
             'rating' => 'nullable|in:hot,warm,cold',
             'estimated_value' => 'nullable|numeric|min:0',
             'currency_code' => 'nullable|string|size:3',
             'description' => 'nullable|string',
             'notes' => 'nullable|string',
             'tags' => 'nullable|array',
+            'status' => 'nullable|in:new,contacted,qualified,unqualified,converted,lost',
         ]);
 
-        $lead = $this->leadService->create($validated);
+        $lead = $this->leadService->create($validated, auth()->id());
 
-        return response()->json([
-            'message' => 'Lead created successfully.',
-            'data' => new LeadResource($lead),
-        ], 201);
+        return $this->created(new LeadResource($lead), 'Lead created successfully.');
     }
 
     /**
      * Show a specific lead.
      */
-    public function show(Lead $lead): LeadResource
+    public function show(Lead $lead): JsonResponse
     {
-        return new LeadResource(
+        return $this->success(new LeadResource(
             $lead->load(['leadSource', 'assignee', 'branch', 'activities', 'convertedContact', 'convertedOpportunity'])
-        );
+        ));
     }
 
     /**
@@ -123,8 +123,8 @@ class LeadController extends Controller
             'address_line_1' => 'nullable|string|max:200',
             'city' => 'nullable|string|max:100',
             'state' => 'nullable|string|max:100',
-            'lead_source_id' => 'nullable|exists:lead_sources,id',
-            'assigned_to' => 'nullable|exists:users,id',
+            'lead_source_id' => ['nullable', Rule::exists('lead_sources', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'assigned_to' => ['nullable', Rule::exists('users', 'id')->where('organization_id', auth()->user()->organization_id)],
             'rating' => 'nullable|in:hot,warm,cold',
             'estimated_value' => 'nullable|numeric|min:0',
             'description' => 'nullable|string',
@@ -132,12 +132,13 @@ class LeadController extends Controller
             'tags' => 'nullable|array',
         ]);
 
-        $lead = $this->leadService->update($lead, $validated);
+        try {
+            $lead = $this->leadService->update($lead, $validated);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Lead updated successfully.',
-            'data' => new LeadResource($lead),
-        ]);
+        return $this->success(new LeadResource($lead), 'Lead updated successfully.');
     }
 
     /**
@@ -146,13 +147,13 @@ class LeadController extends Controller
     public function destroy(Lead $lead): JsonResponse
     {
         if ($lead->isConverted()) {
-            return response()->json(['message' => 'Converted leads cannot be deleted.'], 422);
+            return $this->error('Converted leads cannot be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         $lead->activities()->delete();
         $lead->delete();
 
-        return response()->json(['message' => 'Lead deleted successfully.']);
+        return $this->success(null, 'Lead deleted successfully.');
     }
 
     /**
@@ -165,12 +166,13 @@ class LeadController extends Controller
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $lead = $this->leadService->changeStatus($lead, $validated['status'], $validated['reason'] ?? null);
+        try {
+            $lead = $this->leadService->changeStatus($lead, $validated['status'], $validated['reason'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Lead status changed successfully.',
-            'data' => new LeadResource($lead),
-        ]);
+        return $this->success(new LeadResource($lead), 'Lead status changed successfully.');
     }
 
     /**
@@ -185,24 +187,27 @@ class LeadController extends Controller
             'expected_close_date' => 'nullable|date',
         ]);
 
-        $result = $this->leadService->convert(
-            $lead,
-            $validated['create_opportunity'] ?? true,
-            [
-                'name' => $validated['opportunity_name'] ?? null,
-                'amount' => $validated['opportunity_amount'] ?? null,
-                'expected_close_date' => $validated['expected_close_date'] ?? null,
-            ]
-        );
+        try {
+            $result = $this->leadService->convert(
+                $lead,
+                auth()->id(),
+                $validated['create_opportunity'] ?? true,
+                [
+                    'name' => $validated['opportunity_name'] ?? null,
+                    'amount' => $validated['opportunity_amount'] ?? null,
+                    'expected_close_date' => $validated['expected_close_date'] ?? null,
+                ]
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Lead converted successfully.',
-            'data' => [
-                'lead' => new LeadResource($result['lead']),
-                'contact' => $result['contact'],
-                'opportunity' => $result['opportunity'],
-            ],
-        ]);
+        $lead = $result['lead'];
+        $leadData = (new LeadResource($lead))->toArray(request());
+        $leadData['converted_contact'] = $result['contact'];
+        $leadData['converted_opportunity'] = $result['opportunity'];
+
+        return $this->success($leadData, 'Lead converted successfully.');
     }
 
     /**
@@ -211,15 +216,12 @@ class LeadController extends Controller
     public function assign(Request $request, Lead $lead): JsonResponse
     {
         $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
+            'user_id' => ['required', Rule::exists('users', 'id')->where('organization_id', auth()->user()->organization_id)],
         ]);
 
-        $lead = $this->leadService->assign($lead, $validated['user_id']);
+        $lead = $this->leadService->assign($lead, $validated['user_id'], auth()->id());
 
-        return response()->json([
-            'message' => 'Lead assigned successfully.',
-            'data' => new LeadResource($lead),
-        ]);
+        return $this->success(new LeadResource($lead), 'Lead assigned successfully.');
     }
 
     /**
@@ -231,6 +233,6 @@ class LeadController extends Controller
             $request->assigned_to ? (int) $request->assigned_to : null
         );
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 }

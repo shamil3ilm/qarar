@@ -4,18 +4,30 @@ declare(strict_types=1);
 
 namespace App\Models\Sales;
 
-use App\Models\Accounting\ChartOfAccount;
+use App\Models\Accounting\Account;
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Notifications\Notifiable;
 
 class Contact extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use HasFactory, BelongsToOrganization, HasAuditTrail, HasUuid, SoftDeletes, Notifiable;
+
+    /**
+     * Route notifications for mail channel (contact email).
+     * Contacts receive mail notifications only — no in-app (database) channel.
+     */
+    public function routeNotificationForMail(): string
+    {
+        return $this->email;
+    }
 
     public const TYPE_CUSTOMER = 'customer';
     public const TYPE_SUPPLIER = 'supplier';
@@ -51,6 +63,8 @@ class Contact extends Model
         'shipping_country_code',
         'notes',
         'is_active',
+        'payment_block',
+        'payment_block_reason',
         'created_by',
     ];
 
@@ -60,17 +74,27 @@ class Contact extends Model
             'payment_terms' => 'integer',
             'credit_limit' => 'decimal:4',
             'is_active' => 'boolean',
+            'payment_block' => 'boolean',
+            'tax_number' => 'encrypted',
         ];
+    }
+
+    /**
+     * Check if this contact is blocked for payment processing.
+     */
+    public function isPaymentBlocked(): bool
+    {
+        return (bool) $this->payment_block;
     }
 
     public function receivableAccount(): BelongsTo
     {
-        return $this->belongsTo(ChartOfAccount::class, 'receivable_account_id');
+        return $this->belongsTo(Account::class, 'receivable_account_id');
     }
 
     public function payableAccount(): BelongsTo
     {
-        return $this->belongsTo(ChartOfAccount::class, 'payable_account_id');
+        return $this->belongsTo(Account::class, 'payable_account_id');
     }
 
     public function creator(): BelongsTo
@@ -164,6 +188,17 @@ class Contact extends Model
         return $this->invoices()
             ->whereIn('status', ['sent', 'partial', 'overdue'])
             ->sum('amount_due');
+    }
+
+    /**
+     * Refresh the computed outstanding balance.
+     * Balance is derived live from invoice records — this method exists for
+     * listener compatibility and triggers no additional persistence.
+     */
+    public function updateOutstandingBalance(): void
+    {
+        // Balance is computed on-the-fly via getOutstandingBalance().
+        // No denormalized column exists; this is intentionally a no-op.
     }
 
     /**

@@ -8,8 +8,10 @@ use App\Models\Inventory\Product;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class PriceListItem extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'price_list_id',
         'product_id',

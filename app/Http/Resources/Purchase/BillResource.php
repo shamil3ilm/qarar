@@ -5,16 +5,20 @@ declare(strict_types=1);
 namespace App\Http\Resources\Purchase;
 
 use App\Http\Resources\Sales\ContactResource;
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class BillResource extends JsonResource
 {
+    use MasksSensitiveData;
+
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'bill_number' => $this->bill_number,
             'supplier_invoice_number' => $this->supplier_invoice_number,
             'bill_type' => $this->bill_type,
@@ -23,7 +27,7 @@ class BillResource extends JsonResource
             // Supplier info
             'supplier_id' => $this->supplier_id,
             'supplier_name' => $this->supplier_name,
-            'supplier_tax_number' => $this->supplier_tax_number,
+            'supplier_tax_number' => $this->maskTaxNumber($this->supplier_tax_number),
             'supplier_address' => $this->supplier_address,
             'supplier' => new ContactResource($this->whenLoaded('supplier')),
 
@@ -74,8 +78,6 @@ class BillResource extends JsonResource
             'notes' => $this->notes,
             'branch_id' => $this->branch_id,
             'version' => $this->version,
-            'created_by' => $this->created_by,
-            'approved_by' => $this->approved_by,
             'approved_at' => $this->approved_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),

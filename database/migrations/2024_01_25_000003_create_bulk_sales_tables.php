@@ -122,7 +122,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['organization_id', 'transaction_date']);
-            $table->index(['transaction_type', 'transaction_id']);
         });
     }
 

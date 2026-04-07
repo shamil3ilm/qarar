@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Models\Manufacturing;
 
 use App\Models\Concerns\BelongsToOrganization;
-use App\Models\Core\User;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -20,7 +20,7 @@ class ProductionLog extends Model
         'quantity_produced',
         'quantity_rejected',
         'rejection_reason',
-        'quality_checked',
+        'is_quality_checked',
         'quality_checked_by',
         'quality_checked_at',
         'quality_parameters',
@@ -36,7 +36,7 @@ class ProductionLog extends Model
         'logged_at' => 'datetime',
         'quantity_produced' => 'decimal:4',
         'quantity_rejected' => 'decimal:4',
-        'quality_checked' => 'boolean',
+        'is_quality_checked' => 'boolean',
         'quality_checked_at' => 'datetime',
         'quality_parameters' => 'array',
         'expiry_date' => 'date',
@@ -68,12 +68,12 @@ class ProductionLog extends Model
 
     public function scopeQualityChecked($query)
     {
-        return $query->where('quality_checked', true);
+        return $query->where('is_quality_checked', true);
     }
 
     public function scopePendingQualityCheck($query)
     {
-        return $query->where('quality_checked', false);
+        return $query->where('is_quality_checked', false);
     }
 
     public function scopeWithRejections($query)
@@ -131,7 +131,7 @@ class ProductionLog extends Model
      */
     public function isQualityChecked(): bool
     {
-        return $this->quality_checked;
+        return $this->is_quality_checked;
     }
 
     /**
@@ -140,7 +140,7 @@ class ProductionLog extends Model
     public function markQualityChecked(array $parameters = [], ?int $checkedBy = null): void
     {
         $this->update([
-            'quality_checked' => true,
+            'is_quality_checked' => true,
             'quality_checked_by' => $checkedBy ?? auth()->id(),
             'quality_checked_at' => now(),
             'quality_parameters' => $parameters,

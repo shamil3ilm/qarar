@@ -10,45 +10,31 @@ use App\Models\Inventory\StockTransfer;
 use App\Services\Inventory\StockTransferService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class StockTransferController extends Controller
 {
     public function __construct(
         private StockTransferService $transferService
-    ) {}
+    ) {
+    }
 
     /**
      * List stock transfers.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
-        $query = StockTransfer::with(['fromWarehouse', 'toWarehouse', 'creator'])
-            ->latest();
-
-        if ($request->has('from_warehouse_id')) {
-            $query->fromWarehouse($request->integer('from_warehouse_id'));
-        }
-
-        if ($request->has('to_warehouse_id')) {
-            $query->toWarehouse($request->integer('to_warehouse_id'));
-        }
-
-        if ($request->has('status')) {
-            $query->where('status', $request->input('status'));
-        }
-
-        if ($request->has('from_date')) {
-            $query->where('transfer_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('transfer_date', '<=', $request->input('to_date'));
-        }
+        $query = StockTransfer::with(['fromWarehouse', 'toWarehouse', 'lines.product', 'lines.variant', 'creator'])
+            ->latest()
+            ->when($request->has('from_warehouse_id'), fn($q) => $q->fromWarehouse($request->integer('from_warehouse_id')))
+            ->when($request->has('to_warehouse_id'), fn($q) => $q->toWarehouse($request->integer('to_warehouse_id')))
+            ->when($request->has('status'), fn($q) => $q->where('status', $request->input('status')))
+            ->when($request->has('from_date'), fn($q) => $q->where('transfer_date', '>=', $request->input('from_date')))
+            ->when($request->has('to_date'), fn($q) => $q->where('transfer_date', '<=', $request->input('to_date')));
 
         $transfers = $query->paginate($request->integer('per_page', 15));
 
-        return StockTransferResource::collection($transfers);
+        return $this->paginated($transfers, StockTransferResource::class);
     }
 
     /**
@@ -57,28 +43,38 @@ class StockTransferController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'from_warehouse_id' => 'required|integer|exists:warehouses,id',
-            'to_warehouse_id' => 'required|integer|exists:warehouses,id|different:from_warehouse_id',
+            'from_warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'to_warehouse_id' => ['required', 'integer', 'different:from_warehouse_id', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'transfer_date' => 'required|date',
             'expected_arrival_date' => 'nullable|date|after_or_equal:transfer_date',
             'notes' => 'nullable|string|max:1000',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'required|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
-            'lines.*.quantity_sent' => 'required|numeric|gt:0',
+            'lines.*.product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.quantity_sent' => 'required_without:lines.*.quantity|numeric|gt:0',
+            'lines.*.quantity' => 'required_without:lines.*.quantity_sent|numeric|gt:0',
             'lines.*.notes' => 'nullable|string|max:255',
         ]);
 
-        $transfer = $this->transferService->create(
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines']
-        );
+        // Map quantity to quantity_sent if needed
+        $lines = array_map(function ($line) {
+            if (!isset($line['quantity_sent']) && isset($line['quantity'])) {
+                $line['quantity_sent'] = $line['quantity'];
+            }
+            unset($line['quantity']);
+            return $line;
+        }, $validated['lines']);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock transfer created successfully.',
-            'data' => new StockTransferResource($transfer),
-        ], 201);
+        try {
+            $transfer = $this->transferService->create(
+                collect($validated)->except('lines')->toArray(),
+                $lines
+            );
+
+            return $this->created(new StockTransferResource($transfer), 'Stock transfer created successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -91,10 +87,7 @@ class StockTransferController extends Controller
             'creator', 'shipper', 'receiver',
         ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => new StockTransferResource($stockTransfer),
-        ]);
+        return $this->success(new StockTransferResource($stockTransfer));
     }
 
     /**
@@ -103,29 +96,29 @@ class StockTransferController extends Controller
     public function update(Request $request, StockTransfer $stockTransfer): JsonResponse
     {
         $validated = $request->validate([
-            'from_warehouse_id' => 'sometimes|integer|exists:warehouses,id',
-            'to_warehouse_id' => 'sometimes|integer|exists:warehouses,id',
+            'from_warehouse_id' => ['sometimes', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'to_warehouse_id' => ['sometimes', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'transfer_date' => 'sometimes|date',
             'expected_arrival_date' => 'nullable|date|after_or_equal:transfer_date',
             'notes' => 'nullable|string|max:1000',
             'lines' => 'nullable|array|min:1',
-            'lines.*.product_id' => 'required|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
+            'lines.*.product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.quantity_sent' => 'required|numeric|gt:0',
             'lines.*.notes' => 'nullable|string|max:255',
         ]);
 
-        $transfer = $this->transferService->update(
-            $stockTransfer,
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines'] ?? null
-        );
+        try {
+            $transfer = $this->transferService->update(
+                $stockTransfer,
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines'] ?? null
+            );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock transfer updated successfully.',
-            'data' => new StockTransferResource($transfer),
-        ]);
+            return $this->success(new StockTransferResource($transfer), 'Stock transfer updated successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -133,13 +126,13 @@ class StockTransferController extends Controller
      */
     public function ship(StockTransfer $stockTransfer): JsonResponse
     {
-        $transfer = $this->transferService->ship($stockTransfer);
+        try {
+            $transfer = $this->transferService->ship($stockTransfer, auth()->id());
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock transfer shipped successfully.',
-            'data' => new StockTransferResource($transfer),
-        ]);
+            return $this->success(new StockTransferResource($transfer), 'Stock transfer shipped successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -150,18 +143,31 @@ class StockTransferController extends Controller
         $validated = $request->validate([
             'received_quantities' => 'nullable|array',
             'received_quantities.*' => 'numeric|min:0',
+            'lines' => 'nullable|array',
+            'lines.*.stock_transfer_line_id' => 'required_with:lines|integer',
+            'lines.*.quantity_received' => 'required_with:lines|numeric|min:0',
         ]);
 
-        $transfer = $this->transferService->receive(
-            $stockTransfer,
-            $validated['received_quantities'] ?? []
-        );
+        // Support both formats: received_quantities (line_id => qty) and lines array
+        $receivedQuantities = $validated['received_quantities'] ?? [];
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock transfer received successfully.',
-            'data' => new StockTransferResource($transfer),
-        ]);
+        if (!empty($validated['lines'])) {
+            foreach ($validated['lines'] as $line) {
+                $receivedQuantities[$line['stock_transfer_line_id']] = $line['quantity_received'];
+            }
+        }
+
+        try {
+            $transfer = $this->transferService->receive(
+                $stockTransfer,
+                $receivedQuantities,
+                auth()->id()
+            );
+
+            return $this->success(new StockTransferResource($transfer), 'Stock transfer received successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -169,13 +175,13 @@ class StockTransferController extends Controller
      */
     public function cancel(StockTransfer $stockTransfer): JsonResponse
     {
-        $transfer = $this->transferService->cancel($stockTransfer);
+        try {
+            $transfer = $this->transferService->cancel($stockTransfer);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock transfer cancelled.',
-            'data' => new StockTransferResource($transfer),
-        ]);
+            return $this->success(new StockTransferResource($transfer), 'Stock transfer cancelled.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -185,29 +191,32 @@ class StockTransferController extends Controller
     {
         $summary = $this->transferService->getSummary($stockTransfer);
 
-        return response()->json([
-            'success' => true,
-            'data' => $summary,
-        ]);
+        return $this->success($summary);
     }
 
     /**
-     * Get pending transfers for a warehouse.
+     * Get pending transfers for a warehouse (or all pending transfers).
      */
     public function pending(Request $request): JsonResponse
     {
         $request->validate([
-            'warehouse_id' => 'required|integer|exists:warehouses,id',
+            'warehouse_id' => ['nullable', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
         ]);
 
-        $pending = $this->transferService->getPendingForWarehouse(
-            $request->integer('warehouse_id')
-        );
+        if ($request->has('warehouse_id')) {
+            $pending = $this->transferService->getPendingForWarehouse(
+                $request->integer('warehouse_id')
+            );
+            return $this->success($pending);
+        }
 
-        return response()->json([
-            'success' => true,
-            'data' => $pending,
-        ]);
+        // Return all pending transfers (draft + in_transit)
+        $pending = StockTransfer::with(['fromWarehouse', 'toWarehouse', 'lines.product', 'creator'])
+            ->whereIn('status', [StockTransfer::STATUS_DRAFT, StockTransfer::STATUS_IN_TRANSIT])
+            ->latest()
+            ->paginate($request->integer('per_page', 15));
+
+        return $this->paginated($pending, StockTransferResource::class);
     }
 
     /**
@@ -217,9 +226,6 @@ class StockTransferController extends Controller
     {
         $overdue = $this->transferService->getOverdue();
 
-        return response()->json([
-            'success' => true,
-            'data' => $overdue,
-        ]);
+        return $this->success($overdue);
     }
 }

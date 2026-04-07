@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 namespace App\Services\Auth;
 
+use App\Jobs\TrackUserEvent;
+use App\Models\Core\UserEvent;
+use App\Models\User;
+use App\Notifications\Auth\AccountLockedNotification;
+use App\Notifications\Auth\BruteForceAlertNotification;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class LoginAttemptService
 {
@@ -31,6 +37,12 @@ class LoginAttemptService
         if (!$successful) {
             $this->incrementCounter("login_attempts:email:{$email}");
             $this->incrementCounter("login_attempts:ip:{$ipAddress}");
+
+            // After inserting the failed attempt row, dispatch the event
+            TrackUserEvent::dispatch(UserEvent::USER_LOGIN_FAILED, ['email' => $email], null, null, $ipAddress, null)->afterCommit();
+
+            // Dispatch security notifications based on threshold
+            $this->dispatchSecurityNotifications($email, $ipAddress);
         } else {
             // Clear counters on successful login
             $this->clearCounters($email, $ipAddress);
@@ -103,8 +115,19 @@ class LoginAttemptService
 
     private function incrementCounter(string $key): void
     {
-        $current = Cache::get($key, 0);
-        Cache::put($key, $current + 1, now()->addMinutes(self::LOCKOUT_MINUTES));
+        $ttl = now()->addMinutes(self::LOCKOUT_MINUTES);
+
+        // Atomically initialise (no-op if key already exists) then increment.
+        Cache::add($key, 0, $ttl);
+        Cache::increment($key);
+
+        // Store the expiry timestamp alongside the counter so we can compute
+        // remaining lockout seconds on any cache driver (file, array, etc.)
+        // without relying on the non-portable Store::ttl() method.
+        $expiryKey = $key . ':expiry';
+        if (!Cache::has($expiryKey)) {
+            Cache::put($expiryKey, $ttl->timestamp, $ttl);
+        }
     }
 
     private function getAttemptCount(string $key): int
@@ -114,14 +137,20 @@ class LoginAttemptService
 
     private function getRemainingLockoutSeconds(string $key): int
     {
-        $ttl = Cache::getStore()->ttl($key);
-        return max(0, $ttl ?? self::LOCKOUT_MINUTES * 60);
+        $expiryTimestamp = Cache::get($key . ':expiry');
+        $remainingSeconds = $expiryTimestamp ? max(0, $expiryTimestamp - now()->timestamp) : 0;
+
+        // Fall back to the full lockout window when the expiry key has already expired
+        // or was never written (e.g. counter was set by a prior code version).
+        return $remainingSeconds > 0 ? $remainingSeconds : self::LOCKOUT_MINUTES * 60;
     }
 
     private function clearCounters(string $email, string $ipAddress): void
     {
         Cache::forget("login_attempts:email:{$email}");
+        Cache::forget("login_attempts:email:{$email}:expiry");
         Cache::forget("login_attempts:ip:{$ipAddress}");
+        Cache::forget("login_attempts:ip:{$ipAddress}:expiry");
     }
 
     private function formatTime(int $seconds): string
@@ -132,5 +161,37 @@ class LoginAttemptService
 
         $minutes = ceil($seconds / 60);
         return "{$minutes} minute" . ($minutes > 1 ? 's' : '');
+    }
+
+    /**
+     * Dispatch security notifications when thresholds are crossed.
+     * - At exactly MAX_ATTEMPTS_PER_EMAIL: account is now locked → AccountLockedNotification
+     * - At the brute-force warning threshold (5+, before lockout): BruteForceAlertNotification
+     */
+    private function dispatchSecurityNotifications(string $email, string $ipAddress): void
+    {
+        $emailAttempts = $this->getAttemptCount("login_attempts:email:{$email}");
+
+        $user = User::where('email', $email)->first();
+
+        if ($user === null) {
+            return;
+        }
+
+        try {
+            if ($emailAttempts >= self::MAX_ATTEMPTS_PER_EMAIL) {
+                // Threshold crossed — account is now locked
+                $user->notify(new AccountLockedNotification($ipAddress, self::LOCKOUT_MINUTES));
+            } elseif ($emailAttempts >= self::MAX_ATTEMPTS_PER_EMAIL - 2) {
+                // Brute-force warning threshold: warn at 3 failures, before the lockout at 5
+                $user->notify(new BruteForceAlertNotification($ipAddress, $emailAttempts, $email));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('LoginAttemptService: failed to dispatch security notification', [
+                'email' => $email,
+                'ip'    => $ipAddress,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

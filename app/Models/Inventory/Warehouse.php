@@ -12,11 +12,13 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 class Warehouse extends Model
 {
-    use HasUuid;
+    use HasFactory, HasUuid;
     use BelongsToOrganization;
     use HasAuditTrail;
     use SoftDeletes;
@@ -134,14 +136,19 @@ class Warehouse extends Model
 
     /**
      * Set as default warehouse.
+     *
+     * Wrapped in a transaction with a pessimistic lock so that concurrent
+     * calls cannot both see no default and both set themselves as default,
+     * resulting in multiple default warehouses.
      */
     public function setAsDefault(): void
     {
-        self::where('organization_id', $this->organization_id)
-            ->where('id', '!=', $this->id)
-            ->update(['is_default' => false]);
-
-        $this->update(['is_default' => true]);
+        DB::transaction(function () {
+            Warehouse::where('organization_id', $this->organization_id)
+                ->lockForUpdate()
+                ->update(['is_default' => false]);
+            $this->update(['is_default' => true]);
+        });
     }
 
     public function scopeActive($query)

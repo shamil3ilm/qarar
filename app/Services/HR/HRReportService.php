@@ -42,78 +42,110 @@ class HRReportService
             $query->where('department_id', $departmentId);
         }
 
-        $employees = $query->with(['department', 'designation'])->get();
+        // All sections resolved via DB aggregation — no full collection loaded into memory.
 
-        // Group by department
-        $byDepartment = $employees->groupBy('department_id')->map(function ($group) {
-            $dept = $group->first()->department;
-            return [
-                'department_id' => $dept?->id,
-                'department_name' => $dept?->name ?? 'Unassigned',
-                'count' => $group->count(),
-                'male' => $group->where('gender', 'male')->count(),
-                'female' => $group->where('gender', 'female')->count(),
-                'permanent' => $group->where('employment_type', 'permanent')->count(),
-                'contract' => $group->where('employment_type', 'contract')->count(),
-                'probation' => $group->where('employment_type', 'probation')->count(),
-            ];
-        })->values()->toArray();
+        // Summary counts
+        $summary = (clone $query)->selectRaw("
+            COUNT(*) as total,
+            SUM(CASE WHEN gender = 'male' THEN 1 ELSE 0 END) as male,
+            SUM(CASE WHEN gender = 'female' THEN 1 ELSE 0 END) as female,
+            SUM(CASE WHEN employment_type = 'permanent' THEN 1 ELSE 0 END) as permanent,
+            SUM(CASE WHEN employment_type = 'contract' THEN 1 ELSE 0 END) as contract,
+            SUM(CASE WHEN employment_type = 'probation' THEN 1 ELSE 0 END) as probation,
+            AVG(TIMESTAMPDIFF(YEAR, date_of_joining, ?)) as avg_tenure,
+            AVG(TIMESTAMPDIFF(YEAR, date_of_birth,   ?)) as avg_age
+        ", [$asOfDate, $asOfDate])->first();
 
-        // Group by designation
-        $byDesignation = $employees->groupBy('designation_id')->map(function ($group) {
-            $desig = $group->first()->designation;
-            return [
-                'designation_id' => $desig?->id,
-                'designation_name' => $desig?->name ?? 'Unassigned',
-                'count' => $group->count(),
-            ];
-        })->sortByDesc('count')->values()->take(10)->toArray();
+        // By department
+        $byDepartment = (clone $query)
+            ->join('departments', 'departments.id', '=', 'employees.department_id', 'left')
+            ->selectRaw("
+                employees.department_id,
+                COALESCE(departments.name, 'Unassigned') as department_name,
+                COUNT(*) as count,
+                SUM(CASE WHEN employees.gender = 'male' THEN 1 ELSE 0 END) as male,
+                SUM(CASE WHEN employees.gender = 'female' THEN 1 ELSE 0 END) as female,
+                SUM(CASE WHEN employees.employment_type = 'permanent' THEN 1 ELSE 0 END) as permanent,
+                SUM(CASE WHEN employees.employment_type = 'contract' THEN 1 ELSE 0 END) as contract,
+                SUM(CASE WHEN employees.employment_type = 'probation' THEN 1 ELSE 0 END) as probation
+            ")
+            ->groupBy('employees.department_id', 'departments.name')
+            ->get()->toArray();
 
-        // Group by tenure
+        // By designation (top 10)
+        $byDesignation = (clone $query)
+            ->join('designations', 'designations.id', '=', 'employees.designation_id', 'left')
+            ->selectRaw("employees.designation_id, COALESCE(designations.name, 'Unassigned') as designation_name, COUNT(*) as count")
+            ->groupBy('employees.designation_id', 'designations.name')
+            ->orderByRaw('COUNT(*) DESC')
+            ->limit(10)
+            ->get()->toArray();
+
+        // By tenure
+        $tenureRows = (clone $query)->selectRaw("
+            CASE
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, ?) < 1  THEN '0_1_year'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, ?) < 3  THEN '1_3_years'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, ?) < 5  THEN '3_5_years'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_joining, ?) < 10 THEN '5_10_years'
+                ELSE '10_plus_years'
+            END as bracket, COUNT(*) as cnt
+        ", [$asOfDate, $asOfDate, $asOfDate, $asOfDate])->groupBy('bracket')->pluck('cnt', 'bracket');
+
         $byTenure = [
-            '0_1_year' => $employees->filter(fn($e) => $e->getTenureInYears() < 1)->count(),
-            '1_3_years' => $employees->filter(fn($e) => $e->getTenureInYears() >= 1 && $e->getTenureInYears() < 3)->count(),
-            '3_5_years' => $employees->filter(fn($e) => $e->getTenureInYears() >= 3 && $e->getTenureInYears() < 5)->count(),
-            '5_10_years' => $employees->filter(fn($e) => $e->getTenureInYears() >= 5 && $e->getTenureInYears() < 10)->count(),
-            '10_plus_years' => $employees->filter(fn($e) => $e->getTenureInYears() >= 10)->count(),
+            '0_1_year'     => (int) ($tenureRows['0_1_year']     ?? 0),
+            '1_3_years'    => (int) ($tenureRows['1_3_years']    ?? 0),
+            '3_5_years'    => (int) ($tenureRows['3_5_years']    ?? 0),
+            '5_10_years'   => (int) ($tenureRows['5_10_years']   ?? 0),
+            '10_plus_years'=> (int) ($tenureRows['10_plus_years']?? 0),
         ];
 
-        // Group by age
+        // By age
+        $ageRows = (clone $query)->selectRaw("
+            CASE
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) < 25 THEN 'under_25'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) < 35 THEN '25_35'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) < 45 THEN '35_45'
+                WHEN TIMESTAMPDIFF(YEAR, date_of_birth, NOW()) < 55 THEN '45_55'
+                ELSE '55_plus'
+            END as bracket, COUNT(*) as cnt
+        ")->groupBy('bracket')->pluck('cnt', 'bracket');
+
         $byAge = [
-            'under_25' => $employees->filter(fn($e) => $e->getAge() < 25)->count(),
-            '25_35' => $employees->filter(fn($e) => $e->getAge() >= 25 && $e->getAge() < 35)->count(),
-            '35_45' => $employees->filter(fn($e) => $e->getAge() >= 35 && $e->getAge() < 45)->count(),
-            '45_55' => $employees->filter(fn($e) => $e->getAge() >= 45 && $e->getAge() < 55)->count(),
-            '55_plus' => $employees->filter(fn($e) => $e->getAge() >= 55)->count(),
+            'under_25' => (int) ($ageRows['under_25'] ?? 0),
+            '25_35'    => (int) ($ageRows['25_35']    ?? 0),
+            '35_45'    => (int) ($ageRows['35_45']    ?? 0),
+            '45_55'    => (int) ($ageRows['45_55']    ?? 0),
+            '55_plus'  => (int) ($ageRows['55_plus']  ?? 0),
         ];
 
-        // Nationality distribution
-        $byNationality = $employees->groupBy('nationality')
-            ->map(fn($group, $nat) => ['nationality' => $nat ?: 'Unknown', 'count' => $group->count()])
-            ->sortByDesc('count')
-            ->values()
-            ->take(10)
-            ->toArray();
+        // By nationality (top 10)
+        $byNationality = (clone $query)
+            ->selectRaw("COALESCE(nationality, 'Unknown') as nationality, COUNT(*) as count")
+            ->groupBy('nationality')
+            ->orderByRaw('COUNT(*) DESC')
+            ->limit(10)
+            ->get()->toArray();
 
         return [
             'report_type' => 'headcount',
-            'as_of_date' => $asOfDate,
+            'as_of_date'  => $asOfDate,
             'summary' => [
-                'total_headcount' => $employees->count(),
-                'male' => $employees->where('gender', 'male')->count(),
-                'female' => $employees->where('gender', 'female')->count(),
-                'permanent' => $employees->where('employment_type', 'permanent')->count(),
-                'contract' => $employees->where('employment_type', 'contract')->count(),
-                'probation' => $employees->where('employment_type', 'probation')->count(),
-                'average_tenure_years' => round($employees->avg(fn($e) => $e->getTenureInYears()), 1),
-                'average_age' => round($employees->avg(fn($e) => $e->getAge()), 1),
+                'total_headcount'      => (int)   ($summary->total     ?? 0),
+                'male'                 => (int)   ($summary->male      ?? 0),
+                'female'               => (int)   ($summary->female    ?? 0),
+                'permanent'            => (int)   ($summary->permanent ?? 0),
+                'contract'             => (int)   ($summary->contract  ?? 0),
+                'probation'            => (int)   ($summary->probation ?? 0),
+                'average_tenure_years' => round((float) ($summary->avg_tenure ?? 0), 1),
+                'average_age'          => round((float) ($summary->avg_age    ?? 0), 1),
             ],
-            'by_department' => $byDepartment,
+            'by_department'  => $byDepartment,
             'by_designation' => $byDesignation,
-            'by_tenure' => $byTenure,
-            'by_age' => $byAge,
+            'by_tenure'      => $byTenure,
+            'by_age'         => $byAge,
             'by_nationality' => $byNationality,
-            'generated_at' => now()->toIso8601String(),
+            'generated_at'   => now()->toIso8601String(),
         ];
     }
 
@@ -226,59 +258,77 @@ class HRReportService
             $query->whereHas('employee', fn($q) => $q->where('department_id', $departmentId));
         }
 
-        $attendance = $query->get();
+        // All sections resolved via DB aggregation — no full collection loaded.
 
         // Overall summary
+        $summaryRow = (clone $query)->selectRaw("
+            COUNT(*) as total_records,
+            SUM(CASE WHEN status IN ('present','late','early_leave') THEN 1 ELSE 0 END) as present,
+            SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent,
+            SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) as late,
+            SUM(CASE WHEN status = 'on_leave' THEN 1 ELSE 0 END) as on_leave,
+            SUM(CASE WHEN status = 'half_day' THEN 1 ELSE 0 END) as half_day,
+            COALESCE(SUM(total_working_hours), 0) as total_working_hours,
+            COALESCE(SUM(overtime_hours), 0) as total_overtime_hours,
+            COALESCE(AVG(total_working_hours), 0) as average_working_hours
+        ")->first();
+
         $summary = [
-            'total_records' => $attendance->count(),
-            'present' => $attendance->whereIn('status', ['present', 'late', 'early_leave'])->count(),
-            'absent' => $attendance->where('status', 'absent')->count(),
-            'late' => $attendance->where('status', 'late')->count(),
-            'on_leave' => $attendance->where('status', 'on_leave')->count(),
-            'half_day' => $attendance->where('status', 'half_day')->count(),
-            'total_working_hours' => round($attendance->sum('total_working_hours'), 2),
-            'total_overtime_hours' => round($attendance->sum('overtime_hours'), 2),
-            'average_working_hours' => round($attendance->avg('total_working_hours'), 2),
+            'total_records'         => (int)   ($summaryRow->total_records         ?? 0),
+            'present'               => (int)   ($summaryRow->present               ?? 0),
+            'absent'                => (int)   ($summaryRow->absent                ?? 0),
+            'late'                  => (int)   ($summaryRow->late                  ?? 0),
+            'on_leave'              => (int)   ($summaryRow->on_leave              ?? 0),
+            'half_day'              => (int)   ($summaryRow->half_day              ?? 0),
+            'total_working_hours'   => round((float) ($summaryRow->total_working_hours   ?? 0), 2),
+            'total_overtime_hours'  => round((float) ($summaryRow->total_overtime_hours  ?? 0), 2),
+            'average_working_hours' => round((float) ($summaryRow->average_working_hours ?? 0), 2),
         ];
 
         // By department
-        $byDepartment = $attendance->groupBy('employee.department_id')->map(function ($group) {
-            $dept = $group->first()->employee?->department;
-            $present = $group->whereIn('status', ['present', 'late', 'early_leave'])->count();
-            $total = $group->count();
-
-            return [
-                'department' => $dept?->name ?? 'Unassigned',
-                'total_records' => $total,
-                'present' => $present,
-                'absent' => $group->where('status', 'absent')->count(),
-                'late' => $group->where('status', 'late')->count(),
-                'attendance_rate' => $total > 0 ? round(($present / $total) * 100, 2) : 0,
-            ];
-        })->sortByDesc('attendance_rate')->values()->toArray();
+        $byDepartment = (clone $query)
+            ->join('employees as emp', 'emp.id', '=', 'attendances.employee_id')
+            ->join('departments', 'departments.id', '=', 'emp.department_id', 'left')
+            ->selectRaw("
+                COALESCE(departments.name, 'Unassigned') as department,
+                COUNT(*) as total_records,
+                SUM(CASE WHEN attendances.status IN ('present','late','early_leave') THEN 1 ELSE 0 END) as present,
+                SUM(CASE WHEN attendances.status = 'absent' THEN 1 ELSE 0 END) as absent,
+                SUM(CASE WHEN attendances.status = 'late' THEN 1 ELSE 0 END) as late
+            ")
+            ->groupBy('emp.department_id', 'departments.name')
+            ->orderByRaw('present / NULLIF(COUNT(*), 0) DESC')
+            ->get()
+            ->map(fn($r) => [
+                'department'      => $r->department,
+                'total_records'   => (int) $r->total_records,
+                'present'         => (int) $r->present,
+                'absent'          => (int) $r->absent,
+                'late'            => (int) $r->late,
+                'attendance_rate' => $r->total_records > 0
+                    ? round(($r->present / $r->total_records) * 100, 2) : 0,
+            ])->toArray();
 
         // By day of week
-        $byDayOfWeek = $attendance->groupBy(fn($a) => $a->attendance_date->format('l'))->map(function ($group, $day) {
-            $present = $group->whereIn('status', ['present', 'late', 'early_leave'])->count();
-            return [
-                'day' => $day,
-                'total' => $group->count(),
-                'present' => $present,
-                'absent' => $group->where('status', 'absent')->count(),
-            ];
-        })->values()->toArray();
+        $byDayOfWeek = (clone $query)
+            ->selectRaw("
+                DAYNAME(attendance_date) as day,
+                COUNT(*) as total,
+                SUM(CASE WHEN status IN ('present','late','early_leave') THEN 1 ELSE 0 END) as present,
+                SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent
+            ")
+            ->groupBy('day')
+            ->get()->toArray();
 
-        // Late arrivals analysis
-        $lateArrivals = $attendance->where('status', 'late');
-        $lateByEmployee = $lateArrivals->groupBy('employee_id')
-            ->map(fn($group) => [
-                'employee' => $group->first()->employee?->getDisplayName(),
-                'late_count' => $group->count(),
-            ])
-            ->sortByDesc('late_count')
-            ->take(10)
-            ->values()
-            ->toArray();
+        // Top 10 late arrivals
+        $lateByEmployee = (clone $query)
+            ->where('attendances.status', 'late')
+            ->join('employees as emp2', 'emp2.id', '=', 'attendances.employee_id')
+            ->selectRaw("CONCAT(emp2.first_name, ' ', emp2.last_name) as employee, COUNT(*) as late_count")
+            ->groupBy('attendances.employee_id', 'emp2.first_name', 'emp2.last_name')
+            ->orderByRaw('COUNT(*) DESC')
+            ->limit(10)
+            ->get()->toArray();
 
         return [
             'report_type' => 'attendance',
@@ -309,61 +359,71 @@ class HRReportService
             $query->whereHas('employee', fn($q) => $q->where('department_id', $departmentId));
         }
 
-        $leaves = $query->get();
+        // All sections resolved via DB aggregation — no full collection loaded.
 
         // Summary
+        $summaryRow = (clone $query)->selectRaw("
+            COUNT(*) as total_requests,
+            SUM(CASE WHEN status = 'approved'  THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'pending'   THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'rejected'  THEN 1 ELSE 0 END) as rejected,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+            COALESCE(SUM(total_days), 0) as total_days_requested,
+            COALESCE(SUM(CASE WHEN status = 'approved' THEN total_days ELSE 0 END), 0) as total_days_approved
+        ")->first();
+
         $summary = [
-            'total_requests' => $leaves->count(),
-            'approved' => $leaves->where('status', 'approved')->count(),
-            'pending' => $leaves->where('status', 'pending')->count(),
-            'rejected' => $leaves->where('status', 'rejected')->count(),
-            'cancelled' => $leaves->where('status', 'cancelled')->count(),
-            'total_days_requested' => $leaves->sum('total_days'),
-            'total_days_approved' => $leaves->where('status', 'approved')->sum('total_days'),
+            'total_requests'      => (int)   ($summaryRow->total_requests      ?? 0),
+            'approved'            => (int)   ($summaryRow->approved            ?? 0),
+            'pending'             => (int)   ($summaryRow->pending             ?? 0),
+            'rejected'            => (int)   ($summaryRow->rejected            ?? 0),
+            'cancelled'           => (int)   ($summaryRow->cancelled           ?? 0),
+            'total_days_requested'=> (float) ($summaryRow->total_days_requested?? 0),
+            'total_days_approved' => (float) ($summaryRow->total_days_approved ?? 0),
         ];
 
         // By leave type
-        $byLeaveType = $leaves->groupBy('leave_type_id')->map(function ($group) {
-            $type = $group->first()->leaveType;
-            return [
-                'leave_type' => $type?->name ?? 'Unknown',
-                'requests' => $group->count(),
-                'days' => $group->sum('total_days'),
-                'approved' => $group->where('status', 'approved')->count(),
-            ];
-        })->sortByDesc('requests')->values()->toArray();
+        $byLeaveType = (clone $query)
+            ->join('leave_types', 'leave_types.id', '=', 'leave_requests.leave_type_id', 'left')
+            ->selectRaw("
+                COALESCE(leave_types.name, 'Unknown') as leave_type,
+                COUNT(*) as requests,
+                COALESCE(SUM(leave_requests.total_days), 0) as days,
+                SUM(CASE WHEN leave_requests.status = 'approved' THEN 1 ELSE 0 END) as approved
+            ")
+            ->groupBy('leave_requests.leave_type_id', 'leave_types.name')
+            ->orderByRaw('COUNT(*) DESC')
+            ->get()->toArray();
 
         // By department
-        $byDepartment = $leaves->groupBy('employee.department_id')->map(function ($group) {
-            $dept = $group->first()->employee?->department;
-            return [
-                'department' => $dept?->name ?? 'Unassigned',
-                'requests' => $group->count(),
-                'days' => $group->sum('total_days'),
-            ];
-        })->sortByDesc('requests')->values()->toArray();
+        $byDepartment = (clone $query)
+            ->join('employees as emp', 'emp.id', '=', 'leave_requests.employee_id')
+            ->join('departments', 'departments.id', '=', 'emp.department_id', 'left')
+            ->selectRaw("
+                COALESCE(departments.name, 'Unassigned') as department,
+                COUNT(*) as requests,
+                COALESCE(SUM(leave_requests.total_days), 0) as days
+            ")
+            ->groupBy('emp.department_id', 'departments.name')
+            ->orderByRaw('COUNT(*) DESC')
+            ->get()->toArray();
 
         // By month
-        $byMonth = $leaves->groupBy(fn($l) => $l->start_date->format('Y-m'))->map(function ($group, $month) {
-            return [
-                'month' => $month,
-                'requests' => $group->count(),
-                'days' => $group->sum('total_days'),
-            ];
-        })->sortBy('month')->values()->toArray();
+        $byMonth = (clone $query)
+            ->selectRaw("DATE_FORMAT(start_date, '%Y-%m') as month, COUNT(*) as requests, COALESCE(SUM(total_days), 0) as days")
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get()->toArray();
 
-        // Employees with most leaves
-        $topLeaveTakers = $leaves->where('status', 'approved')
-            ->groupBy('employee_id')
-            ->map(fn($group) => [
-                'employee' => $group->first()->employee?->getDisplayName(),
-                'leaves' => $group->count(),
-                'days' => $group->sum('total_days'),
-            ])
-            ->sortByDesc('days')
-            ->take(10)
-            ->values()
-            ->toArray();
+        // Top 10 leave takers (approved)
+        $topLeaveTakers = (clone $query)
+            ->where('leave_requests.status', 'approved')
+            ->join('employees as emp3', 'emp3.id', '=', 'leave_requests.employee_id')
+            ->selectRaw("CONCAT(emp3.first_name, ' ', emp3.last_name) as employee, COUNT(*) as leaves, COALESCE(SUM(leave_requests.total_days), 0) as days")
+            ->groupBy('leave_requests.employee_id', 'emp3.first_name', 'emp3.last_name')
+            ->orderByRaw('SUM(leave_requests.total_days) DESC')
+            ->limit(10)
+            ->get()->toArray();
 
         return [
             'report_type' => 'leave_analysis',
@@ -393,74 +453,85 @@ class HRReportService
             $query->whereHas('employee', fn($q) => $q->where('branch_id', $this->branchId));
         }
 
-        $payslips = $query->get();
+        // All sections resolved via DB aggregation — no full collection loaded.
+
+        // Currency (single lightweight query)
+        $currency = (clone $query)->value('currency_code') ?? 'USD';
 
         // Summary
+        $summaryRow = (clone $query)->selectRaw("
+            COUNT(*) as total_payslips,
+            COALESCE(SUM(gross_earnings), 0) as total_gross,
+            COALESCE(SUM(total_deductions), 0) as total_deductions,
+            COALESCE(SUM(net_salary), 0) as total_net,
+            COALESCE(AVG(gross_earnings), 0) as average_gross,
+            COALESCE(AVG(net_salary), 0) as average_net,
+            SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) as paid_count,
+            SUM(CASE WHEN status IN ('draft','pending','approved') THEN 1 ELSE 0 END) as pending_count
+        ")->first();
+
         $summary = [
-            'total_payslips' => $payslips->count(),
-            'total_gross' => $payslips->sum('gross_earnings'),
-            'total_deductions' => $payslips->sum('total_deductions'),
-            'total_net' => $payslips->sum('net_salary'),
-            'average_gross' => round($payslips->avg('gross_earnings'), 2),
-            'average_net' => round($payslips->avg('net_salary'), 2),
-            'paid_count' => $payslips->where('status', 'paid')->count(),
-            'pending_count' => $payslips->whereIn('status', ['draft', 'pending', 'approved'])->count(),
+            'total_payslips'  => (int)   ($summaryRow->total_payslips  ?? 0),
+            'total_gross'     => (float) ($summaryRow->total_gross      ?? 0),
+            'total_deductions'=> (float) ($summaryRow->total_deductions ?? 0),
+            'total_net'       => (float) ($summaryRow->total_net        ?? 0),
+            'average_gross'   => round((float) ($summaryRow->average_gross ?? 0), 2),
+            'average_net'     => round((float) ($summaryRow->average_net   ?? 0), 2),
+            'paid_count'      => (int)   ($summaryRow->paid_count       ?? 0),
+            'pending_count'   => (int)   ($summaryRow->pending_count    ?? 0),
         ];
 
         // By department
-        $byDepartment = $payslips->groupBy('employee.department_id')->map(function ($group) {
-            $dept = $group->first()->employee?->department;
-            return [
-                'department' => $dept?->name ?? 'Unassigned',
-                'employees' => $group->count(),
-                'gross' => $group->sum('gross_earnings'),
-                'deductions' => $group->sum('total_deductions'),
-                'net' => $group->sum('net_salary'),
-            ];
-        })->sortByDesc('gross')->values()->toArray();
+        $byDepartment = (clone $query)
+            ->join('employees as emp', 'emp.id', '=', 'payslips.employee_id')
+            ->join('departments', 'departments.id', '=', 'emp.department_id', 'left')
+            ->selectRaw("
+                COALESCE(departments.name, 'Unassigned') as department,
+                COUNT(*) as employees,
+                COALESCE(SUM(payslips.gross_earnings), 0) as gross,
+                COALESCE(SUM(payslips.total_deductions), 0) as deductions,
+                COALESCE(SUM(payslips.net_salary), 0) as net
+            ")
+            ->groupBy('emp.department_id', 'departments.name')
+            ->orderByRaw('SUM(payslips.gross_earnings) DESC')
+            ->get()->toArray();
 
-        // By component
-        $componentTotals = [];
-        foreach ($payslips as $payslip) {
-            foreach ($payslip->items as $item) {
-                $code = $item->salaryComponent?->code ?? $item->name;
-                if (!isset($componentTotals[$code])) {
-                    $componentTotals[$code] = [
-                        'name' => $item->name,
-                        'type' => $item->type,
-                        'total' => 0,
-                        'count' => 0,
-                    ];
-                }
-                $componentTotals[$code]['total'] += $item->amount;
-                $componentTotals[$code]['count']++;
-            }
-        }
-
-        $byComponent = collect($componentTotals)
-            ->sortByDesc('total')
-            ->values()
-            ->toArray();
+        // By salary component (via payslip items join)
+        $byComponent = \Illuminate\Support\Facades\DB::table('payslip_items')
+            ->join('payslips', 'payslips.id', '=', 'payslip_items.payslip_id')
+            ->whereIn('payslips.id', (clone $query)->select('id'))
+            ->selectRaw("
+                COALESCE(payslip_items.name, 'Unknown') as name,
+                payslip_items.type,
+                COALESCE(SUM(payslip_items.amount), 0) as total,
+                COUNT(*) as count
+            ")
+            ->groupBy('payslip_items.name', 'payslip_items.type')
+            ->orderByRaw('SUM(payslip_items.amount) DESC')
+            ->get()->toArray();
 
         // Monthly trend
-        $byMonth = $payslips->groupBy(fn($p) => $p->payrollPeriod?->start_date?->format('Y-m'))->map(function ($group, $month) {
-            return [
-                'month' => $month,
-                'employees' => $group->count(),
-                'gross' => $group->sum('gross_earnings'),
-                'net' => $group->sum('net_salary'),
-            ];
-        })->sortBy('month')->values()->toArray();
+        $byMonth = (clone $query)
+            ->join('payroll_periods as pp', 'pp.id', '=', 'payslips.payroll_period_id')
+            ->selectRaw("
+                DATE_FORMAT(pp.start_date, '%Y-%m') as month,
+                COUNT(*) as employees,
+                COALESCE(SUM(payslips.gross_earnings), 0) as gross,
+                COALESCE(SUM(payslips.net_salary), 0) as net
+            ")
+            ->groupBy('month')
+            ->orderBy('month')
+            ->get()->toArray();
 
         return [
             'report_type' => 'payroll_summary',
             'period_start' => $startDate,
-            'period_end' => $endDate,
-            'currency' => $payslips->first()?->currency_code ?? 'USD',
-            'summary' => $summary,
-            'by_department' => $byDepartment,
+            'period_end'   => $endDate,
+            'currency'     => $currency,
+            'summary'      => $summary,
+            'by_department'=> $byDepartment,
             'by_component' => $byComponent,
-            'monthly_trend' => $byMonth,
+            'monthly_trend'=> $byMonth,
             'generated_at' => now()->toIso8601String(),
         ];
     }

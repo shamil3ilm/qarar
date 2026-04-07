@@ -14,6 +14,7 @@ class BomTemplateResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'bom_number' => $this->bom_number,
             'name' => $this->name,
             'description' => $this->description,
@@ -78,7 +79,6 @@ class BomTemplateResource extends JsonResource
             ),
 
             // Audit
-            'created_by' => $this->created_by,
             'creator' => $this->whenLoaded('createdBy', fn() => [
                 'id' => $this->createdBy->id,
                 'name' => $this->createdBy->name,

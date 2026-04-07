@@ -9,7 +9,6 @@ use App\Models\Core\Webhook;
 use App\Services\Core\WebhookService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class WebhookController extends Controller
 {
@@ -22,12 +21,10 @@ class WebhookController extends Controller
      */
     public function events(): JsonResponse
     {
-        return response()->json([
-            'data' => [
-                'events' => Webhook::EVENTS,
-                'events_by_module' => Webhook::getEventsByModule(),
-            ],
-        ]);
+        return $this->success([
+            'events' => Webhook::EVENTS,
+            'events_by_module' => Webhook::getEventsByModule(),
+        ], 'Webhook events retrieved successfully');
     }
 
     /**
@@ -39,8 +36,8 @@ class WebhookController extends Controller
 
         $webhooks = $this->webhookService->getWebhooks($user->organization_id);
 
-        return response()->json([
-            'data' => $webhooks->map(fn ($webhook) => [
+        return $this->success(
+            $webhooks->map(fn ($webhook) => [
                 'id' => $webhook->id,
                 'uuid' => $webhook->uuid,
                 'name' => $webhook->name,
@@ -55,7 +52,8 @@ class WebhookController extends Controller
                 'last_failure_at' => $webhook->last_failure_at?->toIso8601String(),
                 'created_at' => $webhook->created_at->toIso8601String(),
             ]),
-        ]);
+            'Webhooks retrieved successfully'
+        );
     }
 
     /**
@@ -68,29 +66,27 @@ class WebhookController extends Controller
         $webhook = Webhook::where('organization_id', $user->organization_id)
             ->findOrFail($id);
 
-        return response()->json([
-            'data' => [
-                'id' => $webhook->id,
-                'uuid' => $webhook->uuid,
-                'name' => $webhook->name,
-                'url' => $webhook->url,
-                'secret_masked' => $webhook->masked_secret,
-                'events' => $webhook->events,
-                'headers' => $webhook->headers,
-                'is_active' => $webhook->is_active,
-                'retry_count' => $webhook->retry_count,
-                'timeout_seconds' => $webhook->timeout_seconds,
-                'content_type' => $webhook->content_type,
-                'success_count' => $webhook->success_count,
-                'failure_count' => $webhook->failure_count,
-                'success_rate' => $webhook->success_rate,
-                'last_triggered_at' => $webhook->last_triggered_at?->toIso8601String(),
-                'last_success_at' => $webhook->last_success_at?->toIso8601String(),
-                'last_failure_at' => $webhook->last_failure_at?->toIso8601String(),
-                'created_at' => $webhook->created_at->toIso8601String(),
-                'created_by' => $webhook->creator?->name,
-            ],
-        ]);
+        return $this->success([
+            'id' => $webhook->id,
+            'uuid' => $webhook->uuid,
+            'name' => $webhook->name,
+            'url' => $webhook->url,
+            'secret_masked' => $webhook->masked_secret,
+            'events' => $webhook->events,
+            'headers' => $webhook->headers,
+            'is_active' => $webhook->is_active,
+            'retry_count' => $webhook->retry_count,
+            'timeout_seconds' => $webhook->timeout_seconds,
+            'content_type' => $webhook->content_type,
+            'success_count' => $webhook->success_count,
+            'failure_count' => $webhook->failure_count,
+            'success_rate' => $webhook->success_rate,
+            'last_triggered_at' => $webhook->last_triggered_at?->toIso8601String(),
+            'last_success_at' => $webhook->last_success_at?->toIso8601String(),
+            'last_failure_at' => $webhook->last_failure_at?->toIso8601String(),
+            'created_at' => $webhook->created_at->toIso8601String(),
+            'created_by' => $webhook->creator?->name,
+        ], 'Webhook retrieved successfully');
     }
 
     /**
@@ -98,7 +94,7 @@ class WebhookController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'name' => 'required|string|max:100',
             'url' => 'required|url|max:500',
             'events' => 'required|array|min:1',
@@ -109,8 +105,21 @@ class WebhookController extends Controller
             'timeout_seconds' => 'sometimes|integer|min:5|max:60',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
+        $url = $request->input('url');
+        $parsedUrl = parse_url($url);
+        if (!in_array($parsedUrl['scheme'] ?? '', ['https', 'http'], true)) {
+            return $this->error('Webhook URL must use HTTP or HTTPS scheme.', 'INVALID_WEBHOOK_URL', 422);
+        }
+        if (app()->isProduction() && ($parsedUrl['scheme'] ?? '') !== 'https') {
+            return $this->error('Webhook URL must use HTTPS in production.', 'INVALID_WEBHOOK_URL', 422);
+        }
+
+        $host = $parsedUrl['host'] ?? '';
+        $privatePatterns = ['localhost', '127.', '10.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '192.168.', '0.', '::1', '169.254.'];
+        foreach ($privatePatterns as $pattern) {
+            if (str_starts_with($host, $pattern) || $host === $pattern) {
+                return $this->error('Webhook URL cannot target private/local addresses.', 'OPERATION_FAILED', 422);
+            }
         }
 
         $user = $request->user();
@@ -129,17 +138,14 @@ class WebhookController extends Controller
             ]
         );
 
-        return response()->json([
-            'data' => [
-                'id' => $webhook->id,
-                'uuid' => $webhook->uuid,
-                'name' => $webhook->name,
-                'url' => $webhook->url,
-                'secret' => $webhook->secret, // Only returned on creation
-                'events' => $webhook->events,
-            ],
-            'message' => 'Webhook created successfully. Please save the secret securely.',
-        ], 201);
+        return $this->created([
+            'id' => $webhook->id,
+            'uuid' => $webhook->uuid,
+            'name' => $webhook->name,
+            'url' => $webhook->url,
+            'secret' => $webhook->secret,
+            'events' => $webhook->events,
+        ], 'Webhook created successfully. Please save the secret securely.');
     }
 
     /**
@@ -147,7 +153,7 @@ class WebhookController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'name' => 'sometimes|string|max:100',
             'url' => 'sometimes|url|max:500',
             'events' => 'sometimes|array|min:1',
@@ -158,10 +164,6 @@ class WebhookController extends Controller
             'timeout_seconds' => 'sometimes|integer|min:5|max:60',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $user = $request->user();
 
         $webhook = Webhook::where('organization_id', $user->organization_id)
@@ -171,17 +173,14 @@ class WebhookController extends Controller
             'name', 'url', 'events', 'headers', 'is_active', 'retry_count', 'timeout_seconds',
         ]));
 
-        return response()->json([
-            'data' => [
-                'id' => $webhook->id,
-                'uuid' => $webhook->uuid,
-                'name' => $webhook->name,
-                'url' => $webhook->url,
-                'events' => $webhook->events,
-                'is_active' => $webhook->is_active,
-            ],
-            'message' => 'Webhook updated successfully.',
-        ]);
+        return $this->success([
+            'id' => $webhook->id,
+            'uuid' => $webhook->uuid,
+            'name' => $webhook->name,
+            'url' => $webhook->url,
+            'events' => $webhook->events,
+            'is_active' => $webhook->is_active,
+        ], 'Webhook updated successfully.');
     }
 
     /**
@@ -196,9 +195,7 @@ class WebhookController extends Controller
 
         $this->webhookService->delete($webhook);
 
-        return response()->json([
-            'message' => 'Webhook deleted successfully.',
-        ]);
+        return $this->success(null, 'Webhook deleted successfully.');
     }
 
     /**
@@ -213,10 +210,10 @@ class WebhookController extends Controller
 
         $result = $this->webhookService->test($webhook);
 
-        return response()->json([
-            'data' => $result,
-            'message' => $result['success'] ? 'Webhook test successful!' : 'Webhook test failed.',
-        ]);
+        return $this->success(
+            $result,
+            $result['success'] ? 'Webhook test successful!' : 'Webhook test failed.'
+        );
     }
 
     /**
@@ -231,12 +228,9 @@ class WebhookController extends Controller
 
         $newSecret = $webhook->regenerateSecret();
 
-        return response()->json([
-            'data' => [
-                'secret' => $newSecret,
-            ],
-            'message' => 'Webhook secret regenerated. Please update your integration.',
-        ]);
+        return $this->success([
+            'secret' => $newSecret,
+        ], 'Webhook secret regenerated. Please update your integration.');
     }
 
     /**
@@ -251,12 +245,9 @@ class WebhookController extends Controller
 
         $webhook->update(['is_active' => !$webhook->is_active]);
 
-        return response()->json([
-            'data' => [
-                'is_active' => $webhook->is_active,
-            ],
-            'message' => $webhook->is_active ? 'Webhook enabled.' : 'Webhook disabled.',
-        ]);
+        return $this->success([
+            'is_active' => $webhook->is_active,
+        ], $webhook->is_active ? 'Webhook enabled.' : 'Webhook disabled.');
     }
 
     /**
@@ -272,8 +263,8 @@ class WebhookController extends Controller
 
         $deliveries = $this->webhookService->getDeliveryHistory($webhook, $limit);
 
-        return response()->json([
-            'data' => $deliveries->map(fn ($d) => [
+        return $this->success(
+            $deliveries->map(fn ($d) => [
                 'id' => $d->id,
                 'uuid' => $d->uuid,
                 'event_type' => $d->event_type,
@@ -284,7 +275,8 @@ class WebhookController extends Controller
                 'error_message' => $d->error_message,
                 'created_at' => $d->created_at->toIso8601String(),
             ]),
-        ]);
+            'Delivery history retrieved successfully'
+        );
     }
 
     /**
@@ -299,23 +291,21 @@ class WebhookController extends Controller
 
         $delivery = $webhook->deliveries()->findOrFail($deliveryId);
 
-        return response()->json([
-            'data' => [
-                'id' => $delivery->id,
-                'uuid' => $delivery->uuid,
-                'event_type' => $delivery->event_type,
-                'payload' => $delivery->payload,
-                'status' => $delivery->status,
-                'http_status' => $delivery->http_status,
-                'response_body' => $delivery->response_body,
-                'response_headers' => $delivery->response_headers,
-                'duration_ms' => $delivery->duration_ms,
-                'attempt' => $delivery->attempt,
-                'error_message' => $delivery->error_message,
-                'next_retry_at' => $delivery->next_retry_at?->toIso8601String(),
-                'created_at' => $delivery->created_at->toIso8601String(),
-            ],
-        ]);
+        return $this->success([
+            'id' => $delivery->id,
+            'uuid' => $delivery->uuid,
+            'event_type' => $delivery->event_type,
+            'payload' => $delivery->payload,
+            'status' => $delivery->status,
+            'http_status' => $delivery->http_status,
+            'response_body' => $delivery->response_body,
+            'response_headers' => $delivery->response_headers,
+            'duration_ms' => $delivery->duration_ms,
+            'attempt' => $delivery->attempt,
+            'error_message' => $delivery->error_message,
+            'next_retry_at' => $delivery->next_retry_at?->toIso8601String(),
+            'created_at' => $delivery->created_at->toIso8601String(),
+        ], 'Delivery details retrieved successfully');
     }
 
     /**
@@ -331,14 +321,12 @@ class WebhookController extends Controller
         $delivery = $webhook->deliveries()->findOrFail($deliveryId);
 
         if ($delivery->isSuccess()) {
-            return response()->json(['error' => 'Cannot retry successful delivery'], 400);
+            return $this->error('Cannot retry successful delivery', 'VALIDATION_ERROR', 400);
         }
 
         $this->webhookService->retryDelivery($delivery);
 
-        return response()->json([
-            'message' => 'Delivery queued for retry.',
-        ]);
+        return $this->success(null, 'Delivery queued for retry.');
     }
 
     /**
@@ -351,8 +339,8 @@ class WebhookController extends Controller
 
         $events = $this->webhookService->getEventHistory($user->organization_id, $limit);
 
-        return response()->json([
-            'data' => $events->map(fn ($e) => [
+        return $this->success(
+            $events->map(fn ($e) => [
                 'id' => $e->id,
                 'uuid' => $e->uuid,
                 'event_type' => $e->event_type,
@@ -361,6 +349,7 @@ class WebhookController extends Controller
                 'webhooks_triggered' => $e->webhooks_triggered,
                 'created_at' => $e->created_at->toIso8601String(),
             ]),
-        ]);
+            'Event history retrieved successfully'
+        );
     }
 }

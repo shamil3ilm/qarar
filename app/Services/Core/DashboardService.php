@@ -112,7 +112,7 @@ class DashboardService
             ->sum('total');
 
         $change = $yesterdaySales > 0
-            ? (($todaySales - $yesterdaySales) / $yesterdaySales) * 100
+            ? (float) bcdiv(bcmul(bcsub((string) $todaySales, (string) $yesterdaySales, 4), '100', 4), (string) $yesterdaySales, 4)
             : ($todaySales > 0 ? 100 : 0);
 
         return [
@@ -142,7 +142,7 @@ class DashboardService
             ->sum('total');
 
         $change = $lastMonth > 0
-            ? (($thisMonth - $lastMonth) / $lastMonth) * 100
+            ? (float) bcdiv(bcmul(bcsub((string) $thisMonth, (string) $lastMonth, 4), '100', 4), (string) $lastMonth, 4)
             : ($thisMonth > 0 ? 100 : 0);
 
         return [
@@ -194,8 +194,13 @@ class DashboardService
 
     public function getSalesTrend(array $config = []): array
     {
-        $period = $config['period'] ?? '30days';
+        $period  = $config['period'] ?? '30days';
         $groupBy = $config['group_by'] ?? 'day';
+
+        // Allowlist guard: ensure $groupBy is a known value before it reaches DB::raw
+        if (!in_array($groupBy, ['day', 'week', 'month'], true)) {
+            $groupBy = 'day';
+        }
 
         $startDate = match ($period) {
             '7days' => Carbon::now()->subDays(7),
@@ -212,11 +217,16 @@ class DashboardService
             default => '%Y-%m-%d',
         };
 
+        $driver = DB::connection()->getDriverName();
+        $periodExpr = $driver === 'sqlite'
+            ? "strftime('{$dateFormat}', invoice_date)"
+            : "DATE_FORMAT(invoice_date, '{$dateFormat}')";
+
         $data = Invoice::where('organization_id', $this->organizationId)
             ->where('invoice_date', '>=', $startDate)
             ->whereNotIn('status', ['draft', 'voided'])
             ->select(
-                DB::raw("DATE_FORMAT(invoice_date, '{$dateFormat}') as period"),
+                DB::raw("{$periodExpr} as period"),
                 DB::raw('SUM(total) as total'),
                 DB::raw('COUNT(*) as count')
             )
@@ -634,8 +644,6 @@ class DashboardService
     public function getUpcomingBirthdays(array $config = []): array
     {
         $days = $config['days'] ?? 7;
-        $today = Carbon::today();
-        $endDate = Carbon::today()->addDays($days);
 
         $query = Employee::where('organization_id', $this->organizationId)
             ->where('employment_status', 'active')
@@ -645,31 +653,23 @@ class DashboardService
             $query->where('branch_id', $this->branchId);
         }
 
-        $birthdays = $query->get()
-            ->filter(function ($emp) use ($today, $endDate) {
-                $birthday = $emp->date_of_birth->setYear($today->year);
-                if ($birthday->isPast()) {
-                    $birthday = $birthday->addYear();
-                }
-                return $birthday->between($today, $endDate);
-            })
-            ->map(function ($emp) use ($today) {
-                $birthday = $emp->date_of_birth->setYear($today->year);
-                if ($birthday->isPast()) {
-                    $birthday = $birthday->addYear();
-                }
-                return [
-                    'name' => $emp->first_name . ' ' . $emp->last_name,
-                    'date' => $birthday->format('M d'),
-                    'is_today' => $birthday->isToday(),
-                ];
-            })
-            ->sortBy(fn($b) => $b['is_today'] ? 0 : 1)
-            ->take(5)
-            ->values();
+        // DB-level year-boundary-safe "days until next birthday".
+        $birthdayRaw = "MOD(DATEDIFF(DATE_ADD(date_of_birth, INTERVAL (YEAR(CURDATE()) - YEAR(date_of_birth)) YEAR), CURDATE()) + 366, 366)";
+
+        $birthdays = (clone $query)
+            ->whereRaw("{$birthdayRaw} <= ?", [$days])
+            ->selectRaw("CONCAT(first_name, ' ', last_name) as name, DATE_FORMAT(date_of_birth, '%b %d') as dob_fmt, ({$birthdayRaw}) as days_away")
+            ->orderByRaw($birthdayRaw)
+            ->limit(5)
+            ->get()
+            ->map(fn ($r) => [
+                'name'     => $r->name,
+                'date'     => $r->dob_fmt,
+                'is_today' => (int) $r->days_away === 0,
+            ]);
 
         return [
-            'items' => $birthdays->toArray(),
+            'items' => $birthdays->values()->toArray(),
             'label' => 'Upcoming Birthdays',
         ];
     }

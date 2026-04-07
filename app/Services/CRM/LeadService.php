@@ -21,9 +21,9 @@ class LeadService
     /**
      * Create a new lead.
      */
-    public function create(array $data): Lead
+    public function create(array $data, int $userId): Lead
     {
-        return DB::transaction(function () use ($data) {
+        return DB::transaction(function () use ($data, $userId) {
             if (empty($data['lead_number'])) {
                 $data['lead_number'] = $this->numberGenerator->generate('LEAD');
             }
@@ -46,7 +46,7 @@ class LeadService
                     'status' => Activity::STATUS_PLANNED,
                     'priority' => Activity::PRIORITY_MEDIUM,
                     'start_datetime' => now()->addDay(),
-                    'created_by' => auth()->id(),
+                    'created_by' => $userId,
                 ]);
             }
 
@@ -97,30 +97,48 @@ class LeadService
     /**
      * Convert lead to customer and optionally create opportunity.
      */
-    public function convert(Lead $lead, bool $createOpportunity = true, ?array $opportunityData = null): array
+    public function convert(Lead $lead, int $userId, bool $createOpportunity = true, ?array $opportunityData = null): array
     {
         if (!$lead->canBeConverted()) {
             throw new \InvalidArgumentException('Only qualified leads can be converted.');
         }
 
-        return DB::transaction(function () use ($lead, $createOpportunity, $opportunityData) {
-            // Create contact
-            $contact = Contact::create([
-                'organization_id' => $lead->organization_id,
-                'contact_type' => 'customer',
-                'company_name' => $lead->company_name,
-                'contact_name' => $lead->contact_name,
-                'email' => $lead->email,
-                'phone' => $lead->phone,
-                'website' => $lead->website,
-                'billing_address_line_1' => $lead->address_line_1,
-                'billing_address_line_2' => $lead->address_line_2,
-                'billing_city' => $lead->city,
-                'billing_state' => $lead->state,
-                'billing_postal_code' => $lead->postal_code,
-                'billing_country_code' => $lead->country_code,
-                'currency_code' => $lead->currency_code,
-            ]);
+        return DB::transaction(function () use ($lead, $userId, $createOpportunity, $opportunityData) {
+            // Lock the lead row to prevent duplicate conversions under concurrent requests.
+            $lead = Lead::lockForUpdate()->findOrFail($lead->id);
+
+            if (!$lead->canBeConverted()) {
+                throw new \InvalidArgumentException('Only qualified leads can be converted.');
+            }
+
+            // Deduplicate contact by email within the same organization
+            $existingContact = $lead->email
+                ? Contact::where('organization_id', $lead->organization_id)
+                    ->where('email', $lead->email)
+                    ->lockForUpdate()
+                    ->first()
+                : null;
+
+            if ($existingContact) {
+                $contact = $existingContact;
+            } else {
+                $contact = Contact::create([
+                    'organization_id' => $lead->organization_id,
+                    'contact_type' => 'customer',
+                    'company_name' => $lead->company_name,
+                    'contact_name' => $lead->contact_name,
+                    'email' => $lead->email,
+                    'phone' => $lead->phone,
+                    'website' => $lead->website,
+                    'billing_address_line_1' => $lead->address_line_1,
+                    'billing_address_line_2' => $lead->address_line_2,
+                    'billing_city' => $lead->city,
+                    'billing_state' => $lead->state,
+                    'billing_postal_code' => $lead->postal_code,
+                    'billing_country_code' => $lead->country_code,
+                    'currency_code' => $lead->currency_code,
+                ]);
+            }
 
             $opportunity = null;
 
@@ -146,7 +164,7 @@ class LeadService
                     'branch_id' => $lead->branch_id,
                     'lead_source_id' => $lead->lead_source_id,
                     'status' => Opportunity::STATUS_OPEN,
-                    'created_by' => auth()->id(),
+                    'created_by' => $userId,
                 ]);
             }
 
@@ -156,7 +174,7 @@ class LeadService
                 'converted_contact_id' => $contact->id,
                 'converted_opportunity_id' => $opportunity?->id,
                 'converted_at' => now(),
-                'converted_by' => auth()->id(),
+                'converted_by' => $userId,
             ]);
 
             return [
@@ -219,7 +237,7 @@ class LeadService
     /**
      * Assign lead to user.
      */
-    public function assign(Lead $lead, int $userId): Lead
+    public function assign(Lead $lead, int $userId, int $actorId): Lead
     {
         $lead->update(['assigned_to' => $userId]);
 
@@ -233,7 +251,7 @@ class LeadService
             'status' => Activity::STATUS_PLANNED,
             'priority' => Activity::PRIORITY_MEDIUM,
             'start_datetime' => now()->addDay(),
-            'created_by' => auth()->id(),
+            'created_by' => $actorId,
         ]);
 
         return $lead->fresh();
@@ -256,13 +274,17 @@ class LeadService
         $converted = (clone $query)->converted()->count();
         $lost = (clone $query)->lost()->count();
 
+        $orgId = auth()->user()->organization_id;
+
         $bySource = Lead::selectRaw('lead_source_id, count(*) as count')
+            ->where('organization_id', $orgId)
             ->groupBy('lead_source_id')
             ->with('leadSource:id,name')
             ->get()
             ->mapWithKeys(fn($row) => [$row->leadSource?->name ?? 'Unknown' => $row->count]);
 
         $byRating = Lead::selectRaw('rating, count(*) as count')
+            ->where('organization_id', $orgId)
             ->groupBy('rating')
             ->pluck('count', 'rating');
 

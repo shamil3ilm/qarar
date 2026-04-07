@@ -8,8 +8,10 @@ use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Translation extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     protected $fillable = [

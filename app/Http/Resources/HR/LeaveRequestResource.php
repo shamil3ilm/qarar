@@ -14,6 +14,7 @@ class LeaveRequestResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'status' => $this->status,
 
             // Employee
@@ -51,7 +52,6 @@ class LeaveRequestResource extends JsonResource
             'can_be_cancelled' => $this->canBeCancelled(),
 
             // Approval
-            'approved_by' => $this->approved_by,
             'approver' => $this->whenLoaded('approver', fn() => [
                 'id' => $this->approver->id,
                 'name' => $this->approver->name,

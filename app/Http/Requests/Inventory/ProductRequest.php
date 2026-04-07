@@ -55,8 +55,8 @@ class ProductRequest extends FormRequest
             'expense_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
             'inventory_account_id' => 'nullable|integer|exists:chart_of_accounts,id',
 
-            'track_inventory' => 'boolean',
-            'is_active' => 'boolean',
+            'track_inventory' => 'nullable|boolean',
+            'is_active' => 'nullable|boolean',
 
             'reorder_level' => 'nullable|numeric|min:0',
             'reorder_quantity' => 'nullable|numeric|min:0',
@@ -77,7 +77,7 @@ class ProductRequest extends FormRequest
             'variants.*.selling_price' => 'nullable|numeric|min:0',
             'variants.*.barcode' => 'nullable|string|max:50',
             'variants.*.weight' => 'nullable|numeric|min:0',
-            'variants.*.is_active' => 'boolean',
+            'variants.*.is_active' => 'nullable|boolean',
         ];
 
         // For update requests, make certain fields optional

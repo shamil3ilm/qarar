@@ -8,8 +8,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class RecurringProfileLog extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'recurring_profile_id',
         'created_type',

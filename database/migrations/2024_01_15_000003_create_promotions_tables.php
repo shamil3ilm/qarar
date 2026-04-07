@@ -110,7 +110,9 @@ return new class extends Migration
             $table->string('code', 30)->unique();
             $table->unsignedInteger('max_uses')->nullable();
             $table->unsignedInteger('current_uses')->default(0);
+            $table->unsignedInteger('times_used')->default(0); // Alias for current_uses
             $table->foreignId('assigned_to')->nullable()->constrained('contacts')->nullOnDelete();
+            $table->foreignId('assigned_to_contact_id')->nullable()->constrained('contacts')->nullOnDelete();
             $table->datetime('expires_at')->nullable();
             $table->boolean('is_active')->default(true);
             $table->timestamps();

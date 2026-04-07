@@ -8,6 +8,7 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\Core\Branch;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -15,6 +16,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class BankAccount extends Model
 {
+    use HasFactory;
     use HasUuid;
     use BelongsToOrganization;
     use HasAuditTrail;
@@ -79,6 +81,16 @@ class BankAccount extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(BankTransaction::class)->orderByDesc('transaction_date');
+    }
+
+    public function signatories(): HasMany
+    {
+        return $this->hasMany(BankSignatory::class);
+    }
+
+    public function requests(): HasMany
+    {
+        return $this->hasMany(BankAccountRequest::class);
     }
 
     /**

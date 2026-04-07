@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Reports;
 
-use App\Models\Accounting\ChartOfAccount;
-use App\Models\Accounting\JournalEntry;
-use App\Models\Accounting\JournalEntryLine;
+use App\Models\Accounting\Account;
+use App\Models\Budget\Budget;
 use App\Models\Sales\Invoice;
 use App\Models\Purchase\Bill;
 use Illuminate\Support\Carbon;
@@ -16,64 +15,62 @@ class FinancialReportService
 {
     /**
      * Get Profit & Loss statement.
+     *
+     * Single DB aggregate query (one JOIN + GROUP BY) instead of N+1 per account.
      */
     public function getProfitAndLoss(Carbon $startDate, Carbon $endDate): array
     {
-        // Get all income accounts
-        $incomeAccounts = ChartOfAccount::where('type', 'income')
-            ->with(['journalLines' => function ($query) use ($startDate, $endDate) {
-                $query->whereHas('journalEntry', function ($q) use ($startDate, $endDate) {
-                    $q->where('status', 'posted')
-                        ->whereBetween('entry_date', [$startDate, $endDate]);
-                });
-            }])
+        $orgId = auth()->user()->organization_id;
+
+        // One query: sum debits/credits per account for income + expense accounts.
+        $rows = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->join('chart_of_accounts as a', 'a.id', '=', 'jel.account_id')
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->whereIn('a.account_type', ['income', 'expense'])
+            ->where('a.is_header', false)
+            ->where('a.is_active', true)
+            ->whereBetween('je.entry_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->select([
+                'a.id as account_id',
+                'a.code as account_code',
+                'a.name as account_name',
+                'a.account_type',
+                DB::raw('COALESCE(SUM(jel.base_credit), 0) as total_credit'),
+                DB::raw('COALESCE(SUM(jel.base_debit), 0) as total_debit'),
+            ])
+            ->groupBy('a.id', 'a.code', 'a.name', 'a.account_type')
             ->get();
 
         $totalIncome = 0;
         $incomeBreakdown = [];
-
-        foreach ($incomeAccounts as $account) {
-            $credit = $account->journalLines->sum('credit');
-            $debit = $account->journalLines->sum('debit');
-            $balance = $credit - $debit; // Income is credit
-
-            if ($balance != 0) {
-                $incomeBreakdown[] = [
-                    'account_id' => $account->id,
-                    'account_code' => $account->code,
-                    'account_name' => $account->name,
-                    'amount' => (float) $balance,
-                ];
-                $totalIncome = bcadd((string) $totalIncome, (string) $balance, 4);
-            }
-        }
-
-        // Get all expense accounts
-        $expenseAccounts = ChartOfAccount::where('type', 'expense')
-            ->with(['journalLines' => function ($query) use ($startDate, $endDate) {
-                $query->whereHas('journalEntry', function ($q) use ($startDate, $endDate) {
-                    $q->where('status', 'posted')
-                        ->whereBetween('entry_date', [$startDate, $endDate]);
-                });
-            }])
-            ->get();
-
         $totalExpenses = 0;
         $expenseBreakdown = [];
 
-        foreach ($expenseAccounts as $account) {
-            $debit = $account->journalLines->sum('debit');
-            $credit = $account->journalLines->sum('credit');
-            $balance = $debit - $credit; // Expense is debit
-
-            if ($balance != 0) {
-                $expenseBreakdown[] = [
-                    'account_id' => $account->id,
-                    'account_code' => $account->code,
-                    'account_name' => $account->name,
-                    'amount' => (float) $balance,
-                ];
-                $totalExpenses = bcadd((string) $totalExpenses, (string) $balance, 4);
+        foreach ($rows as $row) {
+            if ($row->account_type === 'income') {
+                $balance = bcsub((string) $row->total_credit, (string) $row->total_debit, 4);
+                if (bccomp($balance, '0', 4) !== 0) {
+                    $incomeBreakdown[] = [
+                        'account_id'   => $row->account_id,
+                        'account_code' => $row->account_code,
+                        'account_name' => $row->account_name,
+                        'amount'       => (float) $balance,
+                    ];
+                    $totalIncome = bcadd((string) $totalIncome, (string) $balance, 4);
+                }
+            } else {
+                $balance = bcsub((string) $row->total_debit, (string) $row->total_credit, 4);
+                if (bccomp($balance, '0', 4) !== 0) {
+                    $expenseBreakdown[] = [
+                        'account_id'   => $row->account_id,
+                        'account_code' => $row->account_code,
+                        'account_name' => $row->account_name,
+                        'amount'       => (float) $balance,
+                    ];
+                    $totalExpenses = bcadd((string) $totalExpenses, (string) $balance, 4);
+                }
             }
         }
 
@@ -93,23 +90,42 @@ class FinancialReportService
                 'breakdown' => $expenseBreakdown,
             ],
             'net_profit' => (float) $netProfit,
-            'profit_margin' => $totalIncome > 0
-                ? round(((float) $netProfit / (float) $totalIncome) * 100, 2)
+            'profit_margin' => bccomp((string) $totalIncome, '0', 4) > 0
+                ? (float) bcmul(bcdiv((string) $netProfit, (string) $totalIncome, 8), '100', 4)
                 : 0,
         ];
     }
 
     /**
      * Get Balance Sheet.
+     *
+     * Single DB aggregate query (one JOIN + GROUP BY) instead of N+1 per account.
      */
     public function getBalanceSheet(Carbon $asOfDate): array
     {
-        $accounts = ChartOfAccount::with(['journalLines' => function ($query) use ($asOfDate) {
-            $query->whereHas('journalEntry', function ($q) use ($asOfDate) {
-                $q->where('status', 'posted')
-                    ->where('entry_date', '<=', $asOfDate);
-            });
-        }])
+        $orgId = auth()->user()->organization_id;
+
+        $bsTypes = ['asset', 'liability', 'equity'];
+
+        $rows = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->join('chart_of_accounts as a', 'a.id', '=', 'jel.account_id')
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->whereIn('a.account_type', $bsTypes)
+            ->where('a.is_header', false)
+            ->where('a.is_active', true)
+            ->whereDate('je.entry_date', '<=', $asOfDate)
+            ->select([
+                'a.id as account_id',
+                'a.code as account_code',
+                'a.name as account_name',
+                'a.account_type',
+                'a.sub_type',
+                DB::raw('COALESCE(SUM(jel.base_debit), 0) as total_debit'),
+                DB::raw('COALESCE(SUM(jel.base_credit), 0) as total_credit'),
+            ])
+            ->groupBy('a.id', 'a.code', 'a.name', 'a.account_type', 'a.sub_type')
             ->get();
 
         $assets = ['current' => [], 'fixed' => [], 'other' => []];
@@ -120,32 +136,29 @@ class FinancialReportService
         $totalLiabilities = 0;
         $totalEquity = 0;
 
-        foreach ($accounts as $account) {
-            $debit = $account->journalLines->sum('debit');
-            $credit = $account->journalLines->sum('credit');
-
-            $balance = match ($account->type) {
-                'asset' => $debit - $credit, // Assets are debit balance
-                'liability', 'equity' => $credit - $debit, // Liabilities/Equity are credit balance
-                default => 0,
+        foreach ($rows as $row) {
+            $balance = match ($row->account_type) {
+                'asset'                  => bcsub((string) $row->total_debit, (string) $row->total_credit, 4),
+                'liability', 'equity'    => bcsub((string) $row->total_credit, (string) $row->total_debit, 4),
+                default                  => '0',
             };
 
-            if ($balance == 0) {
+            if (bccomp($balance, '0', 4) === 0) {
                 continue;
             }
 
             $item = [
-                'account_id' => $account->id,
-                'account_code' => $account->code,
-                'account_name' => $account->name,
-                'amount' => (float) $balance,
+                'account_id'   => $row->account_id,
+                'account_code' => $row->account_code,
+                'account_name' => $row->account_name,
+                'amount'       => (float) $balance,
             ];
 
-            switch ($account->type) {
+            switch ($row->account_type) {
                 case 'asset':
-                    if (in_array($account->sub_type, ['bank', 'cash', 'receivable', 'inventory'])) {
+                    if (in_array($row->sub_type, ['bank', 'cash', 'receivable', 'inventory'])) {
                         $assets['current'][] = $item;
-                    } elseif ($account->sub_type === 'fixed_asset') {
+                    } elseif ($row->sub_type === 'fixed_asset') {
                         $assets['fixed'][] = $item;
                     } else {
                         $assets['other'][] = $item;
@@ -154,7 +167,7 @@ class FinancialReportService
                     break;
 
                 case 'liability':
-                    if (in_array($account->sub_type, ['payable', 'current_liability'])) {
+                    if (in_array($row->sub_type, ['payable', 'current_liability'])) {
                         $liabilities['current'][] = $item;
                     } else {
                         $liabilities['long_term'][] = $item;
@@ -208,18 +221,32 @@ class FinancialReportService
      */
     public function getCashFlow(Carbon $startDate, Carbon $endDate): array
     {
+        $orgId = auth()->user()->organization_id;
+
         // Get bank/cash account IDs
-        $cashAccountIds = ChartOfAccount::where('type', 'asset')
+        $cashAccountIds = Account::where('organization_id', $orgId)
+            ->where('type', 'asset')
             ->whereIn('sub_type', ['bank', 'cash'])
             ->pluck('id');
 
-        // Get all journal entries affecting cash accounts
-        $cashMovements = JournalEntryLine::whereIn('account_id', $cashAccountIds)
-            ->whereHas('journalEntry', function ($query) use ($startDate, $endDate) {
-                $query->where('status', 'posted')
-                    ->whereBetween('entry_date', [$startDate, $endDate]);
-            })
-            ->with(['journalEntry'])
+        // Join journal_entries directly — avoids N+1 from eager-loading.
+        $cashMovements = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->whereIn('jel.account_id', $cashAccountIds)
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->whereBetween('je.entry_date', [$startDate->toDateString(), $endDate->toDateString()])
+            ->select([
+                'je.entry_date',
+                'je.reference',
+                'je.source_type',
+                'je.description as entry_description',
+                'jel.description as line_description',
+                'jel.base_debit as debit',
+                'jel.base_credit as credit',
+            ])
+            ->orderBy('je.entry_date')
+            ->limit(2000)
             ->get();
 
         $operatingCashFlow = 0;
@@ -232,13 +259,13 @@ class FinancialReportService
 
         foreach ($cashMovements as $line) {
             $cashChange = bcsub((string) $line->debit, (string) $line->credit, 4);
-            $sourceType = $line->journalEntry->source_type ?? '';
+            $sourceType = $line->source_type ?? '';
 
             $activity = [
-                'date' => $line->journalEntry->entry_date->format('Y-m-d'),
-                'reference' => $line->journalEntry->reference,
-                'description' => $line->description ?? $line->journalEntry->description,
-                'amount' => (float) $cashChange,
+                'date'        => $line->entry_date,
+                'reference'   => $line->reference,
+                'description' => $line->line_description ?? $line->entry_description,
+                'amount'      => (float) $cashChange,
             ];
 
             // Classify based on source type
@@ -254,13 +281,14 @@ class FinancialReportService
             }
         }
 
-        // Get opening and closing balances
-        $openingBalance = JournalEntryLine::whereIn('account_id', $cashAccountIds)
-            ->whereHas('journalEntry', function ($query) use ($startDate) {
-                $query->where('status', 'posted')
-                    ->where('entry_date', '<', $startDate);
-            })
-            ->selectRaw('SUM(debit) - SUM(credit) as balance')
+        // Get opening balance via single aggregate — no N+1.
+        $openingBalance = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->whereIn('jel.account_id', $cashAccountIds)
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->whereDate('je.entry_date', '<', $startDate)
+            ->selectRaw('COALESCE(SUM(jel.base_debit), 0) - COALESCE(SUM(jel.base_credit), 0) as balance')
             ->first()
             ->balance ?? 0;
 
@@ -301,48 +329,53 @@ class FinancialReportService
     public function getReceivableAging(): array
     {
         $today = now();
+        $orgId = auth()->user()->organization_id;
 
-        $aging = Invoice::whereIn('status', ['sent', 'partial', 'overdue'])
-            ->where('amount_due', '>', 0)
-            ->with('customer:id,company_name,contact_name')
-            ->get()
-            ->map(function ($invoice) use ($today) {
-                $daysOverdue = max(0, $invoice->due_date->diffInDays($today, false));
+        $agingExpr = "CASE
+            WHEN DATEDIFF(CURDATE(), due_date) <= 0  THEN 'current'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 30 THEN '1_30'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 60 THEN '31_60'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 90 THEN '61_90'
+            ELSE 'over_90'
+        END";
 
-                return [
-                    'invoice_id' => $invoice->id,
-                    'invoice_number' => $invoice->invoice_number,
-                    'customer_id' => $invoice->customer_id,
-                    'customer_name' => $invoice->customer?->company_name ?? $invoice->customer_name,
-                    'invoice_date' => $invoice->invoice_date->format('Y-m-d'),
-                    'due_date' => $invoice->due_date->format('Y-m-d'),
-                    'total' => (float) $invoice->total,
-                    'amount_due' => (float) $invoice->amount_due,
-                    'days_overdue' => $daysOverdue,
-                    'aging_bucket' => $this->getAgingBucket($daysOverdue),
-                ];
-            });
+        $baseQuery = Invoice::where('organization_id', $orgId)
+            ->whereIn('status', ['sent', 'partial', 'overdue'])
+            ->where('amount_due', '>', 0);
 
-        // Group by aging bucket
-        $buckets = [
-            'current' => $aging->where('aging_bucket', 'current')->sum('amount_due'),
-            '1_30' => $aging->where('aging_bucket', '1_30')->sum('amount_due'),
-            '31_60' => $aging->where('aging_bucket', '31_60')->sum('amount_due'),
-            '61_90' => $aging->where('aging_bucket', '61_90')->sum('amount_due'),
-            'over_90' => $aging->where('aging_bucket', 'over_90')->sum('amount_due'),
-        ];
+        // Summary via single GROUP BY query
+        $bucketRows = (clone $baseQuery)
+            ->selectRaw("{$agingExpr} as bucket, SUM(amount_due) as total")
+            ->groupBy('bucket')
+            ->pluck('total', 'bucket');
+
+        // Detail: top 200 ordered by most overdue — no full table scan
+        $details = (clone $baseQuery)
+            ->join('contacts as ar_cust', 'ar_cust.id', '=', 'invoices.customer_id', 'left')
+            ->selectRaw("
+                invoices.id as invoice_id, invoices.invoice_number,
+                invoices.customer_id, invoices.customer_name,
+                COALESCE(ar_cust.company_name, invoices.customer_name) as customer_display,
+                invoices.invoice_date, invoices.due_date,
+                invoices.total, invoices.amount_due,
+                GREATEST(0, DATEDIFF(CURDATE(), invoices.due_date)) as days_overdue,
+                {$agingExpr} as aging_bucket
+            ")
+            ->orderByRaw('days_overdue DESC')
+            ->limit(200)
+            ->get()->toArray();
 
         return [
             'as_of_date' => $today->format('Y-m-d'),
             'summary' => [
-                'current' => (float) $buckets['current'],
-                '1_30_days' => (float) $buckets['1_30'],
-                '31_60_days' => (float) $buckets['31_60'],
-                '61_90_days' => (float) $buckets['61_90'],
-                'over_90_days' => (float) $buckets['over_90'],
-                'total' => (float) $aging->sum('amount_due'),
+                'current'      => (float) ($bucketRows['current']  ?? 0),
+                '1_30_days'    => (float) ($bucketRows['1_30']      ?? 0),
+                '31_60_days'   => (float) ($bucketRows['31_60']     ?? 0),
+                '61_90_days'   => (float) ($bucketRows['61_90']     ?? 0),
+                'over_90_days' => (float) ($bucketRows['over_90']   ?? 0),
+                'total'        => (float) $bucketRows->sum(),
             ],
-            'details' => $aging->sortByDesc('days_overdue')->values()->toArray(),
+            'details' => $details,
         ];
     }
 
@@ -352,47 +385,53 @@ class FinancialReportService
     public function getPayableAging(): array
     {
         $today = now();
+        $orgId = auth()->user()->organization_id;
 
-        $aging = Bill::whereIn('status', ['approved', 'partial', 'overdue'])
-            ->where('amount_due', '>', 0)
-            ->with('supplier:id,company_name,contact_name')
-            ->get()
-            ->map(function ($bill) use ($today) {
-                $daysOverdue = max(0, $bill->due_date->diffInDays($today, false));
+        $apAgingExpr = "CASE
+            WHEN DATEDIFF(CURDATE(), due_date) <= 0  THEN 'current'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 30 THEN '1_30'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 60 THEN '31_60'
+            WHEN DATEDIFF(CURDATE(), due_date) <= 90 THEN '61_90'
+            ELSE 'over_90'
+        END";
 
-                return [
-                    'bill_id' => $bill->id,
-                    'bill_number' => $bill->bill_number,
-                    'supplier_id' => $bill->supplier_id,
-                    'supplier_name' => $bill->supplier?->company_name ?? $bill->supplier_name,
-                    'bill_date' => $bill->bill_date->format('Y-m-d'),
-                    'due_date' => $bill->due_date->format('Y-m-d'),
-                    'total' => (float) $bill->total,
-                    'amount_due' => (float) $bill->amount_due,
-                    'days_overdue' => $daysOverdue,
-                    'aging_bucket' => $this->getAgingBucket($daysOverdue),
-                ];
-            });
+        $apBase = Bill::where('organization_id', $orgId)
+            ->whereIn('status', ['approved', 'partial', 'overdue'])
+            ->where('amount_due', '>', 0);
 
-        $buckets = [
-            'current' => $aging->where('aging_bucket', 'current')->sum('amount_due'),
-            '1_30' => $aging->where('aging_bucket', '1_30')->sum('amount_due'),
-            '31_60' => $aging->where('aging_bucket', '31_60')->sum('amount_due'),
-            '61_90' => $aging->where('aging_bucket', '61_90')->sum('amount_due'),
-            'over_90' => $aging->where('aging_bucket', 'over_90')->sum('amount_due'),
-        ];
+        // Summary via single GROUP BY query
+        $apBuckets = (clone $apBase)
+            ->selectRaw("{$apAgingExpr} as bucket, SUM(amount_due) as total")
+            ->groupBy('bucket')
+            ->pluck('total', 'bucket');
+
+        // Detail: top 200 ordered by most overdue
+        $apDetails = (clone $apBase)
+            ->join('contacts as ap_sup', 'ap_sup.id', '=', 'bills.supplier_id', 'left')
+            ->selectRaw("
+                bills.id as bill_id, bills.bill_number,
+                bills.supplier_id, bills.supplier_name,
+                COALESCE(ap_sup.company_name, bills.supplier_name) as supplier_display,
+                bills.bill_date, bills.due_date,
+                bills.total, bills.amount_due,
+                GREATEST(0, DATEDIFF(CURDATE(), bills.due_date)) as days_overdue,
+                {$apAgingExpr} as aging_bucket
+            ")
+            ->orderByRaw('days_overdue DESC')
+            ->limit(200)
+            ->get()->toArray();
 
         return [
             'as_of_date' => $today->format('Y-m-d'),
             'summary' => [
-                'current' => (float) $buckets['current'],
-                '1_30_days' => (float) $buckets['1_30'],
-                '31_60_days' => (float) $buckets['31_60'],
-                '61_90_days' => (float) $buckets['61_90'],
-                'over_90_days' => (float) $buckets['over_90'],
-                'total' => (float) $aging->sum('amount_due'),
+                'current'      => (float) ($apBuckets['current']  ?? 0),
+                '1_30_days'    => (float) ($apBuckets['1_30']      ?? 0),
+                '31_60_days'   => (float) ($apBuckets['31_60']     ?? 0),
+                '61_90_days'   => (float) ($apBuckets['61_90']     ?? 0),
+                'over_90_days' => (float) ($apBuckets['over_90']   ?? 0),
+                'total'        => (float) $apBuckets->sum(),
             ],
-            'details' => $aging->sortByDesc('days_overdue')->values()->toArray(),
+            'details' => $apDetails,
         ];
     }
 
@@ -412,60 +451,173 @@ class FinancialReportService
 
     /**
      * Get Trial Balance.
+     *
+     * Single aggregate query (GROUP BY account) instead of loading all accounts
+     * and their journal lines into PHP memory.
      */
     public function getTrialBalance(Carbon $asOfDate): array
     {
-        $accounts = ChartOfAccount::with(['journalLines' => function ($query) use ($asOfDate) {
-            $query->whereHas('journalEntry', function ($q) use ($asOfDate) {
-                $q->where('status', 'posted')
-                    ->where('entry_date', '<=', $asOfDate);
-            });
-        }])
-            ->orderBy('code')
+        $orgId = auth()->user()->organization_id;
+
+        // One query: sum debits/credits per account up to $asOfDate.
+        $rows = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'jel.journal_entry_id', '=', 'je.id')
+            ->join('chart_of_accounts as coa', 'jel.account_id', '=', 'coa.id')
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->whereDate('je.entry_date', '<=', $asOfDate)
+            ->groupBy('coa.id', 'coa.code', 'coa.name', 'coa.account_type', 'coa.sub_type')
+            ->orderBy('coa.code')
+            ->select([
+                'coa.id as account_id',
+                'coa.code',
+                'coa.name',
+                'coa.account_type',
+                DB::raw('COALESCE(SUM(jel.debit), 0) as total_debit'),
+                DB::raw('COALESCE(SUM(jel.credit), 0) as total_credit'),
+            ])
             ->get();
 
         $lines = [];
-        $totalDebit = 0;
-        $totalCredit = 0;
+        $totalDebit = '0';
+        $totalCredit = '0';
 
-        foreach ($accounts as $account) {
-            $debit = $account->journalLines->sum('debit');
-            $credit = $account->journalLines->sum('credit');
+        foreach ($rows as $row) {
+            $debit  = (string) $row->total_debit;
+            $credit = (string) $row->total_credit;
 
-            if ($debit == 0 && $credit == 0) {
+            if (bccomp($debit, '0', 4) === 0 && bccomp($credit, '0', 4) === 0) {
                 continue;
             }
 
-            // Calculate balance based on account type
-            $balance = match ($account->type) {
-                'asset', 'expense' => bcsub((string) $debit, (string) $credit, 4),
-                default => bcsub((string) $credit, (string) $debit, 4),
+            // Balance direction follows account normal balance convention.
+            $balance = match ($row->account_type) {
+                'asset', 'expense' => bcsub($debit, $credit, 4),
+                default            => bcsub($credit, $debit, 4),
             };
 
-            $balanceDebit = $balance > 0 ? (float) $balance : 0;
-            $balanceCredit = $balance < 0 ? (float) abs($balance) : 0;
+            $balanceDebit  = bccomp($balance, '0', 4) > 0 ? (float) $balance : 0.0;
+            $balanceCredit = bccomp($balance, '0', 4) < 0 ? (float) bcsub('0', $balance, 4) : 0.0;
 
             $lines[] = [
-                'account_id' => $account->id,
-                'account_code' => $account->code,
-                'account_name' => $account->name,
-                'account_type' => $account->type,
-                'debit' => $balanceDebit,
-                'credit' => $balanceCredit,
+                'account_id'   => $row->account_id,
+                'account_code' => $row->code,
+                'account_name' => $row->name,
+                'account_type' => $row->account_type,
+                'debit'        => $balanceDebit,
+                'credit'       => $balanceCredit,
             ];
 
-            $totalDebit = bcadd((string) $totalDebit, (string) $balanceDebit, 4);
-            $totalCredit = bcadd((string) $totalCredit, (string) $balanceCredit, 4);
+            $totalDebit  = bcadd($totalDebit, (string) $balanceDebit, 4);
+            $totalCredit = bcadd($totalCredit, (string) $balanceCredit, 4);
         }
 
         return [
             'as_of_date' => $asOfDate->format('Y-m-d'),
-            'lines' => $lines,
-            'totals' => [
-                'debit' => (float) $totalDebit,
+            'lines'      => $lines,
+            'totals'     => [
+                'debit'  => (float) $totalDebit,
                 'credit' => (float) $totalCredit,
             ],
-            'is_balanced' => bccomp((string) $totalDebit, (string) $totalCredit, 2) === 0,
+            'is_balanced' => bccomp($totalDebit, $totalCredit, 2) === 0,
+        ];
+    }
+
+    /**
+     * Actual vs Budget variance report.
+     *
+     * Returns all active budgets for the organisation with per-line variance
+     * (budgeted, committed, actual, variance_amount, variance_pct, is_over_budget).
+     *
+     * Optional filters:
+     *   budget_type: annual|quarterly|project|department
+     *   period_start / period_end: ISO date strings for budget period overlap
+     *
+     * @param array{budget_type?: string, period_start?: string, period_end?: string} $filters
+     */
+    public function getActualVsBudget(array $filters = []): array
+    {
+        $orgId = auth()->user()->organization_id;
+
+        $query = Budget::where('organization_id', $orgId)
+            ->whereIn('status', [Budget::STATUS_ACTIVE, Budget::STATUS_APPROVED, Budget::STATUS_CLOSED])
+            ->with(['lines.account', 'fiscalYear']);
+
+        if (! empty($filters['budget_type'])) {
+            $query->where('budget_type', $filters['budget_type']);
+        }
+
+        if (! empty($filters['period_start']) && ! empty($filters['period_end'])) {
+            $query->forPeriod($filters['period_start'], $filters['period_end']);
+        }
+
+        $result = [];
+
+        // chunkById processes 50 budgets at a time — avoids loading all lines into memory at once
+        $query->chunkById(50, function ($budgets) use (&$result) {
+            foreach ($budgets as $budget) {
+                $totalBudgeted  = '0.00';
+                $totalCommitted = '0.00';
+                $totalActual    = '0.00';
+
+                $lines = $budget->lines->map(function ($line) use (&$totalBudgeted, &$totalCommitted, &$totalActual) {
+                    $budgeted    = (string) $line->total_amount;
+                    $committed   = (string) $line->committed_amount;
+                    $actual      = (string) $line->actual_amount;
+                    $variance    = bcsub($budgeted, $actual, 2);
+                    $variancePct = bccomp($budgeted, '0', 2) > 0
+                        ? round((float) bcdiv($variance, $budgeted, 6) * 100, 2)
+                        : 0.0;
+
+                    $totalBudgeted  = bcadd($totalBudgeted, $budgeted, 2);
+                    $totalCommitted = bcadd($totalCommitted, $committed, 2);
+                    $totalActual    = bcadd($totalActual, $actual, 2);
+
+                    return [
+                        'account_code'    => $line->account?->code,
+                        'account_name'    => $line->account?->name,
+                        'budget_amount'   => (float) $budgeted,
+                        'committed'       => (float) $committed,
+                        'actual'          => (float) $actual,
+                        'available'       => (float) bcsub(bcsub($budgeted, $committed, 2), $actual, 2),
+                        'variance_amount' => (float) $variance,
+                        'variance_pct'    => $variancePct,
+                        'is_over_budget'  => bccomp($actual, $budgeted, 2) > 0,
+                    ];
+                });
+
+                $totalVariance    = bcsub($totalBudgeted, $totalActual, 2);
+                $totalVariancePct = bccomp($totalBudgeted, '0', 2) > 0
+                    ? round((float) bcdiv($totalVariance, $totalBudgeted, 6) * 100, 2)
+                    : 0.0;
+
+                $result[] = [
+                    'budget_id'          => $budget->id,
+                    'budget_uuid'        => $budget->uuid,
+                    'name'               => $budget->name,
+                    'budget_type'        => $budget->budget_type,
+                    'status'             => $budget->status,
+                    'period_start'       => $budget->period_start?->format('Y-m-d'),
+                    'period_end'         => $budget->period_end?->format('Y-m-d'),
+                    'fiscal_year'        => $budget->fiscalYear?->name,
+                    'total_budgeted'     => (float) $totalBudgeted,
+                    'total_committed'    => (float) $totalCommitted,
+                    'total_actual'       => (float) $totalActual,
+                    'total_variance'     => (float) $totalVariance,
+                    'total_variance_pct' => $totalVariancePct,
+                    'utilization_pct'    => $budget->getUtilizationPercent(),
+                    'lines'              => $lines,
+                ];
+            }
+        });
+
+        // Sort descending by period_start after chunking (chunkById uses id ordering internally)
+        usort($result, fn ($a, $b) => strcmp((string) $b['period_start'], (string) $a['period_start']));
+
+        return [
+            'generated_at' => now()->toIso8601String(),
+            'filters'      => $filters,
+            'budgets'      => $result,
         ];
     }
 }

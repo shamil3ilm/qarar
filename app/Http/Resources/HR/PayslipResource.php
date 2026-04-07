@@ -14,6 +14,7 @@ class PayslipResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'payslip_number' => $this->payslip_number,
             'status' => $this->status,
 
@@ -80,7 +81,6 @@ class PayslipResource extends JsonResource
             'paid_at' => $this->paid_at?->toIso8601String(),
 
             // Approval
-            'approved_by' => $this->approved_by,
             'approved_at' => $this->approved_at?->toIso8601String(),
 
             // Metadata

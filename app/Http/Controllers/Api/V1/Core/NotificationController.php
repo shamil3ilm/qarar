@@ -9,7 +9,6 @@ use App\Models\Core\Notification;
 use App\Services\Core\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class NotificationController extends Controller
 {
@@ -37,10 +36,10 @@ class NotificationController extends Controller
 
         $unreadCount = $this->notificationService->getUnreadCount($user->id);
 
-        return response()->json([
-            'data' => $notifications,
+        return $this->success([
+            'notifications' => $notifications,
             'unread_count' => $unreadCount,
-        ]);
+        ], 'Notifications retrieved successfully');
     }
 
     /**
@@ -50,9 +49,9 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        return response()->json([
+        return $this->success([
             'unread_count' => $this->notificationService->getUnreadCount($user->id),
-        ]);
+        ], 'Unread count retrieved successfully');
     }
 
     /**
@@ -62,16 +61,15 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $success = $this->notificationService->markAsRead($id, $user->id);
+        $result = $this->notificationService->markAsRead($id, $user->id);
 
-        if (!$success) {
-            return response()->json(['error' => 'Notification not found'], 404);
+        if (!$result) {
+            return $this->notFound('Notification not found');
         }
 
-        return response()->json([
-            'message' => 'Notification marked as read',
+        return $this->success([
             'unread_count' => $this->notificationService->getUnreadCount($user->id),
-        ]);
+        ], 'Notification marked as read');
     }
 
     /**
@@ -86,10 +84,10 @@ class NotificationController extends Controller
             $request->get('type')
         );
 
-        return response()->json([
-            'message' => "{$count} notifications marked as read",
+        return $this->success([
+            'marked_count' => $count,
             'unread_count' => 0,
-        ]);
+        ], "{$count} notifications marked as read");
     }
 
     /**
@@ -99,15 +97,13 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $success = $this->notificationService->delete($id, $user->id);
+        $result = $this->notificationService->delete($id, $user->id);
 
-        if (!$success) {
-            return response()->json(['error' => 'Notification not found'], 404);
+        if (!$result) {
+            return $this->notFound('Notification not found');
         }
 
-        return response()->json([
-            'message' => 'Notification deleted',
-        ]);
+        return $this->success(null, 'Notification deleted');
     }
 
     /**
@@ -121,13 +117,11 @@ class NotificationController extends Controller
         $types = Notification::getTypes();
         $typesGrouped = Notification::getTypesGrouped();
 
-        return response()->json([
-            'data' => [
-                'preferences' => $preferences,
-                'available_types' => $types,
-                'types_grouped' => $typesGrouped,
-            ],
-        ]);
+        return $this->success([
+            'preferences' => $preferences,
+            'available_types' => $types,
+            'types_grouped' => $typesGrouped,
+        ], 'Notification preferences retrieved successfully');
     }
 
     /**
@@ -137,7 +131,7 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'preferences' => 'required|array',
             'preferences.*.notification_type' => 'required|string',
             'preferences.*.email_enabled' => 'boolean',
@@ -145,10 +139,6 @@ class NotificationController extends Controller
             'preferences.*.push_enabled' => 'boolean',
             'preferences.*.sms_enabled' => 'boolean',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         foreach ($request->get('preferences') as $pref) {
             $this->notificationService->updateUserPreference(
@@ -161,10 +151,10 @@ class NotificationController extends Controller
             );
         }
 
-        return response()->json([
-            'message' => 'Preferences updated successfully',
-            'data' => $this->notificationService->getUserPreferences($user->id),
-        ]);
+        return $this->success(
+            $this->notificationService->getUserPreferences($user->id),
+            'Preferences updated successfully'
+        );
     }
 
     /**
@@ -174,16 +164,12 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'email_enabled' => 'boolean',
             'database_enabled' => 'boolean',
             'push_enabled' => 'boolean',
             'sms_enabled' => 'boolean',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $preference = $this->notificationService->updateUserPreference(
             $user->id,
@@ -194,10 +180,7 @@ class NotificationController extends Controller
             $request->boolean('sms_enabled', false)
         );
 
-        return response()->json([
-            'message' => 'Preference updated',
-            'data' => $preference,
-        ]);
+        return $this->success($preference, 'Preference updated');
     }
 
     /**
@@ -205,12 +188,10 @@ class NotificationController extends Controller
      */
     public function types(Request $request): JsonResponse
     {
-        return response()->json([
-            'data' => [
-                'types' => Notification::getTypes(),
-                'grouped' => Notification::getTypesGrouped(),
-            ],
-        ]);
+        return $this->success([
+            'types' => Notification::getTypes(),
+            'grouped' => Notification::getTypesGrouped(),
+        ], 'Notification types retrieved successfully');
     }
 
     /**
@@ -222,9 +203,9 @@ class NotificationController extends Controller
 
         $this->notificationService->initializeUserPreferences($user);
 
-        return response()->json([
-            'message' => 'Preferences initialized',
-            'data' => $this->notificationService->getUserPreferences($user->id),
-        ]);
+        return $this->success(
+            $this->notificationService->getUserPreferences($user->id),
+            'Preferences initialized'
+        );
     }
 }

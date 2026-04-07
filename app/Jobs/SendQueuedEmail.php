@@ -19,7 +19,7 @@ class SendQueuedEmail implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
-    public int $backoff = 60;
+    public array $backoff = [60, 300, 900];
 
     public function __construct(
         public int $emailLogId,
@@ -31,7 +31,7 @@ class SendQueuedEmail implements ShouldQueue
 
     public function handle(): void
     {
-        $log = EmailLog::find($this->emailLogId);
+        $log = EmailLog::withoutGlobalScopes()->find($this->emailLogId);
 
         if (!$log) {
             Log::warning('Email log not found', ['id' => $this->emailLogId]);
@@ -128,7 +128,7 @@ class SendQueuedEmail implements ShouldQueue
 
     public function failed(\Throwable $exception): void
     {
-        $log = EmailLog::find($this->emailLogId);
+        $log = EmailLog::withoutGlobalScopes()->find($this->emailLogId);
 
         if ($log) {
             $log->markAsFailed($exception->getMessage());

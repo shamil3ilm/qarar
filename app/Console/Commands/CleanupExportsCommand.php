@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Services\Core\ExportService;
+use App\Services\Core\AsyncExportService;
 use Illuminate\Console\Command;
 
 class CleanupExportsCommand extends Command
@@ -13,7 +13,7 @@ class CleanupExportsCommand extends Command
 
     protected $description = 'Clean up expired export files';
 
-    public function handle(ExportService $exportService): int
+    public function handle(AsyncExportService $exportService): int
     {
         $this->info('Cleaning up expired exports...');
 

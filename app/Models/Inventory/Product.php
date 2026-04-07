@@ -9,13 +9,18 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasOwnership;
 use App\Models\Concerns\HasUuid;
+use App\Models\Sales\PriceListItem;
+use App\Models\Tax\TaxCategory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
+    use HasFactory;
     use HasUuid;
     use BelongsToOrganization;
     use HasAuditTrail;
@@ -36,33 +41,74 @@ class Product extends Model
         'name',
         'description',
         'type',
+        'product_type',
         'category_id',
         'unit_id',
+        'base_unit_id',
         'purchase_price',
         'selling_price',
         'minimum_price',
+        'mrp',
+        'wholesale_price',
         'tax_category_id',
         'hsn_code',
-        'income_account_id',
-        'expense_account_id',
-        'inventory_account_id',
         'costing_method',
         'track_inventory',
+        'track_batches',
+        'track_serials',
+        'has_expiry',
+        'expiry_warning_days',
+        'requires_inspection',
+        'batch_selection_strategy',
+        'has_variants',
+        'allow_negative_stock',
+        'sell_below_cost',
+        'minimum_stock',
+        'maximum_stock',
         'reorder_level',
+        'reorder_point',
         'reorder_quantity',
+        'lead_time_days',
+        'default_supplier_lead_days',
+        'is_loose_item',
+        'tare_weight',
+        'barcode_type',
         'weight',
         'weight_unit',
         'length',
         'width',
         'height',
         'dimension_unit',
+        'long_description',
+        'short_description',
+        'brand',
+        'manufacturer',
+        'model_number',
+        'country_of_origin',
         'image_url',
         'gallery_urls',
+        'minimum_order_qty',
+        'maximum_order_qty',
+        'warranty_type',
+        'warranty_months',
+        'warranty_terms',
+        'shelf_life_days',
+        'seo_meta',
         'is_active',
         'is_purchasable',
         'is_sellable',
+        'is_featured',
+        'is_new_arrival',
+        'is_bestseller',
+        'is_returnable',
+        'is_taxable',
+        'requires_shipping',
         'created_by',
         'updated_by',
+        'income_account_id',
+        'expense_account_id',
+        'inventory_account_id',
+        'material_account_group_id',
     ];
 
     protected function casts(): array
@@ -79,9 +125,23 @@ class Product extends Model
             'height' => 'decimal:3',
             'gallery_urls' => 'array',
             'track_inventory' => 'boolean',
+            'track_batches' => 'boolean',
+            'requires_inspection' => 'boolean',
+            'track_serials' => 'boolean',
+            'has_expiry' => 'boolean',
+            'has_variants' => 'boolean',
+            'allow_negative_stock' => 'boolean',
+            'sell_below_cost' => 'boolean',
+            'is_loose_item' => 'boolean',
             'is_active' => 'boolean',
             'is_purchasable' => 'boolean',
             'is_sellable' => 'boolean',
+            'is_featured' => 'boolean',
+            'is_new_arrival' => 'boolean',
+            'is_bestseller' => 'boolean',
+            'is_returnable' => 'boolean',
+            'is_taxable' => 'boolean',
+            'requires_shipping' => 'boolean',
         ];
     }
 
@@ -130,6 +190,71 @@ class Product extends Model
         return $this->hasMany(StockMovement::class);
     }
 
+    public function specifications(): HasMany
+    {
+        return $this->hasMany(ProductSpecification::class);
+    }
+
+    public function images(): HasMany
+    {
+        return $this->hasMany(ProductImage::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(ProductDocument::class);
+    }
+
+    public function priceHistory(): HasMany
+    {
+        return $this->hasMany(ProductPriceHistory::class);
+    }
+
+    public function videos(): HasMany
+    {
+        return $this->hasMany(ProductVideo::class);
+    }
+
+    public function certifications(): HasMany
+    {
+        return $this->hasMany(ProductCertification::class);
+    }
+
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(ProductReview::class);
+    }
+
+    public function relations(): HasMany
+    {
+        return $this->hasMany(ProductRelation::class);
+    }
+
+    public function priceListItems(): HasMany
+    {
+        return $this->hasMany(PriceListItem::class);
+    }
+
+    public function barcodes(): HasMany
+    {
+        return $this->hasMany(ProductBarcode::class);
+    }
+
+    public function hazmatClassifications(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            HazmatClassification::class,
+            'product_hazmat_classifications',
+            'product_id',
+            'hazmat_classification_id'
+        )->withPivot(['storage_class_id', 'is_primary'])->withTimestamps();
+    }
+
+    public function productHazmatClassifications(): HasMany
+    {
+        return $this->hasMany(ProductHazmatClassification::class);
+    }
+
     /**
      * Get total stock across all warehouses.
      */
@@ -143,7 +268,9 @@ class Product extends Model
      */
     public function getAvailableStock(): float
     {
-        return (float) $this->stockLevels()->sum('available_quantity');
+        return (float) $this->stockLevels()
+            ->selectRaw('COALESCE(SUM(quantity - reserved_quantity), 0) as available')
+            ->value('available');
     }
 
     /**

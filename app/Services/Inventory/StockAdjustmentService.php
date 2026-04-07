@@ -46,7 +46,7 @@ class StockAdjustmentService
                 $adjustment->lines()->create($lineData);
             }
 
-            return $adjustment->load('lines.product');
+            return $adjustment->load(['lines.product', 'lines.variant']);
         });
     }
 
@@ -81,30 +81,56 @@ class StockAdjustmentService
                 }
             }
 
-            return $adjustment->fresh(['lines.product']);
+            return $adjustment->fresh(['lines.product', 'lines.variant']);
         });
     }
 
     /**
      * Post (approve) a stock adjustment.
      */
-    public function post(StockAdjustment $adjustment): StockAdjustment
+    public function post(StockAdjustment $adjustment, int $userId): StockAdjustment
     {
         if (!$adjustment->canPost()) {
             throw new \InvalidArgumentException('Adjustment cannot be posted.');
         }
 
-        return DB::transaction(function () use ($adjustment) {
+        return DB::transaction(function () use ($adjustment, $userId) {
+            // Re-fetch with a row lock to prevent concurrent double-posting.
+            $adjustment = StockAdjustment::lockForUpdate()->findOrFail($adjustment->id);
+
+            if (!$adjustment->canPost()) {
+                throw new \InvalidArgumentException('Adjustment cannot be posted in its current state.');
+            }
+
             foreach ($adjustment->lines as $line) {
                 if ($line->hasNoChange()) {
                     continue;
+                }
+
+                if ($line->actual_quantity < 0) {
+                    throw new \InvalidArgumentException('Actual quantity cannot be negative.');
+                }
+
+                // Re-read system quantity under a row lock to prevent a
+                // concurrent update from racing between the draft capture
+                // and this post, which would cause an incorrect adjustment.
+                $stockLevel = StockLevel::where('product_id', $line->product_id)
+                    ->where('warehouse_id', $adjustment->warehouse_id)
+                    ->where('variant_id', $line->variant_id)
+                    ->where('location_id', $line->location_id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($stockLevel && bccomp((string) $line->system_quantity, (string) $stockLevel->quantity, 4) !== 0) {
+                    $line->system_quantity = $stockLevel->quantity;
+                    $line->save();
                 }
 
                 // Record stock movement
                 $this->stockService->adjust(
                     productId: $line->product_id,
                     warehouseId: $adjustment->warehouse_id,
-                    newQuantity: $line->actual_quantity,
+                    newQuantity: (float) $line->actual_quantity,
                     variantId: $line->variant_id,
                     locationId: $line->location_id,
                     referenceNumber: $adjustment->adjustment_number,
@@ -116,10 +142,10 @@ class StockAdjustmentService
             $adjustment->update([
                 'status' => StockAdjustment::STATUS_POSTED,
                 'posted_at' => now(),
-                'posted_by' => auth()->id(),
+                'posted_by' => $userId,
             ]);
 
-            return $adjustment->fresh();
+            return $adjustment->fresh(['lines.product', 'lines.variant']);
         });
     }
 
@@ -134,7 +160,7 @@ class StockAdjustmentService
 
         $adjustment->update(['status' => StockAdjustment::STATUS_CANCELLED]);
 
-        return $adjustment->fresh();
+        return $adjustment->fresh(['lines.product', 'lines.variant']);
     }
 
     /**
@@ -145,6 +171,7 @@ class StockAdjustmentService
         int $warehouseId,
         float $actualQuantity,
         string $reason,
+        int $userId,
         ?string $notes = null
     ): StockAdjustment {
         return $this->create(
@@ -153,7 +180,7 @@ class StockAdjustmentService
                 'adjustment_date' => now()->toDateString(),
                 'reason' => $reason,
                 'notes' => $notes,
-                'created_by' => auth()->id(),
+                'created_by' => $userId,
             ],
             [
                 [
@@ -170,6 +197,7 @@ class StockAdjustmentService
     public function createFromStockCount(
         int $warehouseId,
         array $countedItems,
+        int $userId,
         ?string $notes = null
     ): StockAdjustment {
         $lines = [];
@@ -190,7 +218,7 @@ class StockAdjustmentService
                 'adjustment_date' => now()->toDateString(),
                 'reason' => StockAdjustment::REASON_COUNT_CORRECTION,
                 'notes' => $notes,
-                'created_by' => auth()->id(),
+                'created_by' => $userId,
             ],
             $lines
         );

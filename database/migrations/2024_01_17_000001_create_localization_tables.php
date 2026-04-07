@@ -155,52 +155,10 @@ return new class extends Migration
             $table->index(['organization_id', 'kpi_code', 'period_start']);
         });
 
-        // Premium/Subscription features
-        Schema::create('subscription_plans', function (Blueprint $table) {
-            $table->id();
-            $table->string('code')->unique();
-            $table->string('name');
-            $table->text('description')->nullable();
-            $table->decimal('monthly_price', 10, 2)->default(0);
-            $table->decimal('yearly_price', 10, 2)->default(0);
-            $table->string('currency_code', 3)->default('USD');
-            $table->integer('max_users')->default(1);
-            $table->integer('max_branches')->default(1);
-            $table->integer('max_products')->nullable();
-            $table->integer('max_invoices_per_month')->nullable();
-            $table->integer('storage_gb')->default(5);
-            $table->json('features'); // List of feature codes
-            $table->json('limits')->nullable(); // Other limits
-            $table->boolean('is_active')->default(true);
-            $table->integer('sort_order')->default(0);
-            $table->timestamps();
-        });
-
-        // Organization subscriptions
-        Schema::create('organization_subscriptions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('plan_id')->constrained('subscription_plans');
-            $table->string('status'); // active, cancelled, expired, trial
-            $table->string('billing_cycle'); // monthly, yearly
-            $table->date('started_at');
-            $table->date('expires_at')->nullable();
-            $table->date('cancelled_at')->nullable();
-            $table->date('trial_ends_at')->nullable();
-            $table->json('custom_limits')->nullable(); // Override plan limits
-            $table->json('addons')->nullable(); // Additional features
-            $table->string('payment_method')->nullable();
-            $table->string('external_subscription_id')->nullable(); // Stripe/PayPal ID
-            $table->timestamps();
-
-            $table->index(['organization_id', 'status']);
-        });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('organization_subscriptions');
-        Schema::dropIfExists('subscription_plans');
         Schema::dropIfExists('kpi_targets');
         Schema::dropIfExists('kpi_definitions');
         Schema::dropIfExists('dashboard_widgets');

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Accounting;
 
 use App\Http\Controllers\Controller;
+use App\Models\Accounting\FiscalYear;
 use App\Services\Accounting\AccountBalanceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,13 +22,17 @@ class ReportController extends Controller
     public function trialBalance(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'fiscal_year_id' => ['required', 'exists:fiscal_years,id'],
+            'fiscal_year_id' => ['nullable', 'exists:fiscal_years,id'],
             'as_of_date' => ['nullable', 'date'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date'],
         ]);
+
+        $fiscalYearId = (int) ($validated['fiscal_year_id'] ?? $this->getCurrentFiscalYearId());
 
         $trialBalance = $this->balanceService->getTrialBalance(
             auth()->user()->organization_id,
-            $validated['fiscal_year_id'],
+            $fiscalYearId,
             $validated['as_of_date'] ?? null
         );
 
@@ -40,13 +45,15 @@ class ReportController extends Controller
     public function balanceSheet(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'fiscal_year_id' => ['required', 'exists:fiscal_years,id'],
+            'fiscal_year_id' => ['nullable', 'exists:fiscal_years,id'],
             'as_of_date' => ['nullable', 'date'],
         ]);
 
+        $fiscalYearId = (int) ($validated['fiscal_year_id'] ?? $this->getCurrentFiscalYearId());
+
         $balanceSheet = $this->balanceService->getBalanceSheetSummary(
             auth()->user()->organization_id,
-            $validated['fiscal_year_id'],
+            $fiscalYearId,
             $validated['as_of_date'] ?? null
         );
 
@@ -59,18 +66,27 @@ class ReportController extends Controller
     public function incomeStatement(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'fiscal_year_id' => ['required', 'exists:fiscal_years,id'],
+            'fiscal_year_id' => ['nullable', 'exists:fiscal_years,id'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date'],
         ]);
 
+        $fiscalYearId = (int) ($validated['fiscal_year_id'] ?? $this->getCurrentFiscalYearId());
+
         $incomeStatement = $this->balanceService->getIncomeStatementSummary(
             auth()->user()->organization_id,
-            $validated['fiscal_year_id'],
+            $fiscalYearId,
             $validated['start_date'] ?? null,
             $validated['end_date'] ?? null
         );
 
         return $this->success($incomeStatement);
+    }
+
+    private function getCurrentFiscalYearId(): int
+    {
+        return (int) FiscalYear::where('organization_id', auth()->user()->organization_id)
+            ->where('is_current', true)
+            ->value('id');
     }
 }

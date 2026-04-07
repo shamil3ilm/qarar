@@ -201,24 +201,26 @@ class StatutoryDeductionService
 
     /**
      * India Income Tax slabs (New Regime FY 2024-25).
+     * Boundaries: lower bound inclusive (>=), upper bound exclusive (<).
      */
     protected const INDIA_TAX_SLABS_NEW = [
-        ['min' => 0, 'max' => 300000, 'rate' => 0],
-        ['min' => 300001, 'max' => 700000, 'rate' => 5],
-        ['min' => 700001, 'max' => 1000000, 'rate' => 10],
-        ['min' => 1000001, 'max' => 1200000, 'rate' => 15],
-        ['min' => 1200001, 'max' => 1500000, 'rate' => 20],
-        ['min' => 1500001, 'max' => INF, 'rate' => 30],
+        ['min' => 0,       'max' => 300000,  'rate' => 0],
+        ['min' => 300000,  'max' => 700000,  'rate' => 5],
+        ['min' => 700000,  'max' => 1000000, 'rate' => 10],
+        ['min' => 1000000, 'max' => 1200000, 'rate' => 15],
+        ['min' => 1200000, 'max' => 1500000, 'rate' => 20],
+        ['min' => 1500000, 'max' => INF,     'rate' => 30],
     ];
 
     /**
      * India Income Tax slabs (Old Regime FY 2024-25).
+     * Boundaries: lower bound inclusive (>=), upper bound exclusive (<).
      */
     protected const INDIA_TAX_SLABS_OLD = [
-        ['min' => 0, 'max' => 250000, 'rate' => 0],
-        ['min' => 250001, 'max' => 500000, 'rate' => 5],
-        ['min' => 500001, 'max' => 1000000, 'rate' => 20],
-        ['min' => 1000001, 'max' => INF, 'rate' => 30],
+        ['min' => 0,       'max' => 250000,  'rate' => 0],
+        ['min' => 250000,  'max' => 500000,  'rate' => 5],
+        ['min' => 500000,  'max' => 1000000, 'rate' => 20],
+        ['min' => 1000000, 'max' => INF,     'rate' => 30],
     ];
 
     /**
@@ -463,23 +465,20 @@ class StatutoryDeductionService
         $taxableIncome = max(0, $annualSalary - $standardDeduction);
 
         $tax = 0;
-        $previousMax = 0;
 
         foreach ($slabs as $slab) {
-            if ($taxableIncome <= 0) {
+            if ($taxableIncome <= $slab['min']) {
                 break;
             }
 
             $slabMin = $slab['min'];
-            $slabMax = $slab['max'] === INF ? $taxableIncome + $slabMin : $slab['max'];
-            $slabAmount = min($taxableIncome, $slabMax - $slabMin + 1);
+            $slabMax = $slab['max'] === INF ? $taxableIncome : $slab['max'];
 
-            if ($taxableIncome > $slabMin) {
-                $taxableInSlab = min($taxableIncome - $slabMin + 1, $slabMax - $slabMin + 1);
+            // Amount of taxable income that falls within this slab [min, max)
+            if ($taxableIncome >= $slabMin) {
+                $taxableInSlab = min($taxableIncome, $slabMax) - $slabMin;
                 $tax += $taxableInSlab * ($slab['rate'] / 100);
             }
-
-            $previousMax = $slabMax;
         }
 
         // Rebate under 87A for new regime (if taxable income <= 7 lakh)

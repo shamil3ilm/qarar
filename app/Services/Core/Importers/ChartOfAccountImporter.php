@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Core\Importers;
 
-use App\Models\Accounting\ChartOfAccount;
+use App\Models\Accounting\Account;
 use App\Models\Core\ImportJob;
 use App\Services\Core\ImporterInterface;
 
@@ -13,7 +13,7 @@ class ChartOfAccountImporter implements ImporterInterface
     public function importRow(array $data, ImportJob $importJob, array $options = []): mixed
     {
         // Check for existing account
-        $existing = ChartOfAccount::where('organization_id', $importJob->organization_id)
+        $existing = Account::where('organization_id', $importJob->organization_id)
             ->where('code', $data['code'])
             ->first();
 
@@ -25,7 +25,7 @@ class ChartOfAccountImporter implements ImporterInterface
         // Resolve parent account
         $parentId = null;
         if (!empty($data['parent_code'])) {
-            $parent = ChartOfAccount::where('organization_id', $importJob->organization_id)
+            $parent = Account::where('organization_id', $importJob->organization_id)
                 ->where('code', $data['parent_code'])
                 ->first();
             $parentId = $parent?->id;
@@ -55,6 +55,6 @@ class ChartOfAccountImporter implements ImporterInterface
             return $existing;
         }
 
-        return ChartOfAccount::create($accountData);
+        return Account::create($accountData);
     }
 }

@@ -11,7 +11,6 @@ use App\Models\Core\OrganizationSubscription;
 use App\Services\Core\DashboardService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class DashboardController extends Controller
 {
@@ -37,7 +36,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getDashboardData($layout);
 
-        return response()->json(['data' => $data]);
+        return $this->success($data, 'Dashboard data retrieved successfully');
     }
 
     /**
@@ -49,10 +48,10 @@ class DashboardController extends Controller
 
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
 
-        return response()->json([
-            'data' => $this->dashboardService->getQuickStats(),
+        return $this->success([
+            'stats' => $this->dashboardService->getQuickStats(),
             'generated_at' => now()->toIso8601String(),
-        ]);
+        ], 'Quick stats retrieved successfully');
     }
 
     /**
@@ -64,14 +63,14 @@ class DashboardController extends Controller
         $widget = DashboardWidget::getByCode($widgetCode);
 
         if (!$widget) {
-            return response()->json(['error' => 'Widget not found'], 404);
+            return $this->notFound('Widget not found');
         }
 
         // Check premium access
         if ($widget->is_premium) {
             $subscription = OrganizationSubscription::getCurrentForOrganization($user->organization_id);
             if (!$subscription?->hasFeature('dashboard_customization')) {
-                return response()->json(['error' => 'Premium feature'], 403);
+                return $this->forbidden('Premium feature');
             }
         }
 
@@ -80,10 +79,10 @@ class DashboardController extends Controller
         $config = array_merge($widget->default_config ?? [], $request->all());
         $data = $this->dashboardService->getWidgetData($widget, $config);
 
-        return response()->json([
+        return $this->success([
             'widget' => $widget->toArray(),
-            'data' => $data,
-        ]);
+            'widget_data' => $data,
+        ], 'Widget data retrieved successfully');
     }
 
     /**
@@ -114,12 +113,12 @@ class DashboardController extends Controller
 
         $widgets = $query->get();
 
-        return response()->json([
-            'data' => $widgets,
+        return $this->success([
+            'widgets' => $widgets,
             'categories' => DashboardWidget::getCategories(),
             'types' => DashboardWidget::getTypes(),
             'premium_access' => $includePremium,
-        ]);
+        ], 'Widgets retrieved successfully');
     }
 
     /**
@@ -140,13 +139,11 @@ class DashboardController extends Controller
             ->where('is_shared', true)
             ->get();
 
-        return response()->json([
-            'data' => [
-                'user_layouts' => $userLayouts,
-                'shared_layouts' => $sharedLayouts,
-            ],
+        return $this->success([
+            'user_layouts' => $userLayouts,
+            'shared_layouts' => $sharedLayouts,
             'types' => DashboardLayout::getTypes(),
-        ]);
+        ], 'Layouts retrieved successfully');
     }
 
     /**
@@ -166,7 +163,7 @@ class DashboardController extends Controller
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
         $data = $this->dashboardService->getDashboardData($layout);
 
-        return response()->json(['data' => $data]);
+        return $this->success($data, 'Layout retrieved successfully');
     }
 
     /**
@@ -174,7 +171,7 @@ class DashboardController extends Controller
      */
     public function createLayout(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'name' => 'required|string|max:100',
             'type' => 'required|string|in:' . implode(',', array_keys(DashboardLayout::getTypes())),
             'widgets' => 'nullable|array',
@@ -183,16 +180,12 @@ class DashboardController extends Controller
             'is_shared' => 'nullable|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $user = $request->user();
 
         // Check if user can create shared layouts
         $isShared = $request->boolean('is_shared');
         if ($isShared && !$user->hasPermission('core.settings.edit')) {
-            return response()->json(['error' => 'Permission denied for shared layouts'], 403);
+            return $this->forbidden('Permission denied for shared layouts');
         }
 
         $layout = DashboardLayout::create([
@@ -215,7 +208,7 @@ class DashboardController extends Controller
                 ->update(['is_default' => false]);
         }
 
-        return response()->json(['data' => $layout], 201);
+        return $this->success($layout, 'Layout created successfully');
     }
 
     /**
@@ -237,21 +230,17 @@ class DashboardController extends Controller
 
         // Check permission for shared layouts
         if ($layout->is_shared && !$user->hasPermission('core.settings.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'name' => 'sometimes|string|max:100',
             'widgets' => 'sometimes|array',
             'layout' => 'sometimes|array',
             'is_default' => 'sometimes|boolean',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
-        $layout->fill($validator->validated());
+        $layout->fill($validated);
         $layout->save();
 
         // If setting as default, unset other defaults
@@ -263,7 +252,7 @@ class DashboardController extends Controller
                 ->update(['is_default' => false]);
         }
 
-        return response()->json(['data' => $layout]);
+        return $this->success($layout, 'Layout updated successfully');
     }
 
     /**
@@ -279,7 +268,7 @@ class DashboardController extends Controller
 
         $layout->delete();
 
-        return response()->json(['message' => 'Layout deleted']);
+        return $this->success(null, 'Layout deleted');
     }
 
     /**
@@ -293,7 +282,7 @@ class DashboardController extends Controller
             ->where('user_id', $user->id)
             ->findOrFail($layoutId);
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'widget_code' => 'required|string|exists:dashboard_widgets,code',
             'size' => 'required|string',
             'position' => 'required|array',
@@ -302,10 +291,6 @@ class DashboardController extends Controller
             'config' => 'nullable|array',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $layout->addWidget(
             $request->get('widget_code'),
             $request->get('size'),
@@ -313,7 +298,7 @@ class DashboardController extends Controller
             $request->get('config', [])
         );
 
-        return response()->json(['data' => $layout]);
+        return $this->success($layout, 'Widget added successfully');
     }
 
     /**
@@ -329,7 +314,7 @@ class DashboardController extends Controller
 
         $layout->removeWidget($widgetCode);
 
-        return response()->json(['data' => $layout]);
+        return $this->success($layout, 'Widget removed successfully');
     }
 
     /**
@@ -343,19 +328,15 @@ class DashboardController extends Controller
             ->where('user_id', $user->id)
             ->findOrFail($layoutId);
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'position' => 'required|array',
             'position.x' => 'required|integer|min:0',
             'position.y' => 'required|integer|min:0',
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-
         $layout->updateWidgetPosition($widgetCode, $request->get('position'));
 
-        return response()->json(['data' => $layout]);
+        return $this->success($layout, 'Widget position updated successfully');
     }
 
     /**
@@ -381,6 +362,6 @@ class DashboardController extends Controller
         $this->dashboardService->setContext($user->organization_id, $user->current_branch_id);
         $data = $this->dashboardService->getDashboardData($layout);
 
-        return response()->json(['data' => $data]);
+        return $this->success($data, 'Layout reset to default');
     }
 }

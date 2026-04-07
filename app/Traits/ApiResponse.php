@@ -179,9 +179,15 @@ trait ApiResponse
 
     private function getMeta(): array
     {
+        static $requestId = null;
+        if ($requestId === null) {
+            $requestId = request()->header('X-Request-ID')
+                ?? (string) Str::uuid();
+        }
+
         return [
-            'request_id' => (string) Str::uuid(),
-            'timestamp' => now()->toISOString(),
+            'request_id' => $requestId,
+            'timestamp'  => now()->toISOString(),
         ];
     }
 }

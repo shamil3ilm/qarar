@@ -11,18 +11,19 @@ use App\Models\CRM\PipelineStage;
 use App\Services\CRM\OpportunityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class OpportunityController extends Controller
 {
     public function __construct(
         private OpportunityService $opportunityService
-    ) {}
+    ) {
+    }
 
     /**
      * List opportunities with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = Opportunity::with(['contact', 'pipelineStage', 'assignee', 'leadSource'])
             ->when($request->status, fn($q, $status) => $q->where('status', $status))
@@ -39,13 +40,14 @@ class OpportunityController extends Controller
                         ->orWhere('account_name', 'like', "%{$search}%");
                 });
             })
-            ->orderBy($request->sort_by ?? 'expected_close_date', $request->sort_order ?? 'asc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['title', 'status', 'amount', 'expected_close_date', 'created_at', 'updated_at'], 'expected_close_date'),
+                $this->safeSortOrder($request->sort_order, 'asc')
+            );
 
-        $opportunities = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        $opportunities = $query->paginate($request->integer('per_page', 15));
 
-        return OpportunityResource::collection($opportunities);
+        return $this->paginated($opportunities, OpportunityResource::class);
     }
 
     /**
@@ -53,21 +55,23 @@ class OpportunityController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $orgId = $request->user()->organization_id;
+
         $validated = $request->validate([
             'opportunity_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:200',
             'description' => 'nullable|string',
-            'contact_id' => 'nullable|exists:contacts,id',
-            'lead_id' => 'nullable|exists:leads,id',
+            'contact_id' => ['nullable', Rule::exists('contacts', 'id')->where('organization_id', $orgId)],
+            'lead_id' => ['nullable', Rule::exists('leads', 'id')->where('organization_id', $orgId)],
             'account_name' => 'nullable|string|max:200',
-            'pipeline_stage_id' => 'nullable|exists:pipeline_stages,id',
+            'pipeline_stage_id' => ['required', Rule::exists('pipeline_stages', 'id')->where('organization_id', $orgId)],
             'probability' => 'nullable|integer|min:0|max:100',
             'amount' => 'nullable|numeric|min:0',
             'currency_code' => 'nullable|string|size:3',
             'expected_close_date' => 'nullable|date',
-            'assigned_to' => 'nullable|exists:users,id',
-            'branch_id' => 'nullable|exists:branches,id',
-            'lead_source_id' => 'nullable|exists:lead_sources,id',
+            'assigned_to' => ['nullable', Rule::exists('users', 'id')->where('organization_id', $orgId)],
+            'branch_id' => ['nullable', Rule::exists('branches', 'id')->where('organization_id', $orgId)],
+            'lead_source_id' => ['nullable', Rule::exists('lead_sources', 'id')->where('organization_id', $orgId)],
             'notes' => 'nullable|string',
             'tags' => 'nullable|array',
             'competitors' => 'nullable|array',
@@ -75,20 +79,17 @@ class OpportunityController extends Controller
 
         $opportunity = $this->opportunityService->create($validated);
 
-        return response()->json([
-            'message' => 'Opportunity created successfully.',
-            'data' => new OpportunityResource($opportunity),
-        ], 201);
+        return $this->created(new OpportunityResource($opportunity), 'Opportunity created successfully.');
     }
 
     /**
      * Show a specific opportunity.
      */
-    public function show(Opportunity $opportunity): OpportunityResource
+    public function show(Opportunity $opportunity): JsonResponse
     {
-        return new OpportunityResource(
+        return $this->success(new OpportunityResource(
             $opportunity->load(['contact', 'lead', 'pipelineStage', 'assignee', 'leadSource', 'activities'])
-        );
+        ));
     }
 
     /**
@@ -96,26 +97,29 @@ class OpportunityController extends Controller
      */
     public function update(Request $request, Opportunity $opportunity): JsonResponse
     {
+        $orgId = $request->user()->organization_id;
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:200',
             'description' => 'nullable|string',
-            'contact_id' => 'nullable|exists:contacts,id',
+            'contact_id' => ['nullable', Rule::exists('contacts', 'id')->where('organization_id', $orgId)],
             'account_name' => 'nullable|string|max:200',
             'probability' => 'nullable|integer|min:0|max:100',
             'amount' => 'nullable|numeric|min:0',
             'expected_close_date' => 'nullable|date',
-            'assigned_to' => 'nullable|exists:users,id',
+            'assigned_to' => ['nullable', Rule::exists('users', 'id')->where('organization_id', $orgId)],
             'notes' => 'nullable|string',
             'tags' => 'nullable|array',
             'competitors' => 'nullable|array',
         ]);
 
-        $opportunity = $this->opportunityService->update($opportunity, $validated);
+        try {
+            $opportunity = $this->opportunityService->update($opportunity, $validated);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Opportunity updated successfully.',
-            'data' => new OpportunityResource($opportunity),
-        ]);
+        return $this->success(new OpportunityResource($opportunity), 'Opportunity updated successfully.');
     }
 
     /**
@@ -126,7 +130,7 @@ class OpportunityController extends Controller
         $opportunity->activities()->delete();
         $opportunity->delete();
 
-        return response()->json(['message' => 'Opportunity deleted successfully.']);
+        return $this->success(null, 'Opportunity deleted successfully.');
     }
 
     /**
@@ -135,16 +139,17 @@ class OpportunityController extends Controller
     public function moveToStage(Request $request, Opportunity $opportunity): JsonResponse
     {
         $validated = $request->validate([
-            'pipeline_stage_id' => 'required|exists:pipeline_stages,id',
+            'pipeline_stage_id' => ['required', Rule::exists('pipeline_stages', 'id')->where('organization_id', $request->user()->organization_id)],
         ]);
 
-        $stage = PipelineStage::findOrFail($validated['pipeline_stage_id']);
-        $opportunity = $this->opportunityService->moveToStage($opportunity, $stage);
+        try {
+            $stage = PipelineStage::findOrFail($validated['pipeline_stage_id']);
+            $opportunity = $this->opportunityService->moveToStage($opportunity, $stage, auth()->id());
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Opportunity moved to new stage.',
-            'data' => new OpportunityResource($opportunity),
-        ]);
+        return $this->success(new OpportunityResource($opportunity), 'Opportunity moved to new stage.');
     }
 
     /**
@@ -154,14 +159,18 @@ class OpportunityController extends Controller
     {
         $validated = $request->validate([
             'reason' => 'nullable|string|max:500',
+            'won_reason' => 'nullable|string|max:500',
         ]);
 
-        $opportunity = $this->opportunityService->win($opportunity, $validated['reason'] ?? null);
+        $reason = $validated['won_reason'] ?? $validated['reason'] ?? null;
 
-        return response()->json([
-            'message' => 'Opportunity marked as won.',
-            'data' => new OpportunityResource($opportunity),
-        ]);
+        try {
+            $opportunity = $this->opportunityService->win($opportunity, auth()->id(), $reason);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
+
+        return $this->success(new OpportunityResource($opportunity), 'Opportunity marked as won.');
     }
 
     /**
@@ -171,14 +180,18 @@ class OpportunityController extends Controller
     {
         $validated = $request->validate([
             'reason' => 'nullable|string|max:500',
+            'lost_reason' => 'nullable|string|max:500',
         ]);
 
-        $opportunity = $this->opportunityService->lose($opportunity, $validated['reason'] ?? null);
+        $reason = $validated['lost_reason'] ?? $validated['reason'] ?? null;
 
-        return response()->json([
-            'message' => 'Opportunity marked as lost.',
-            'data' => new OpportunityResource($opportunity),
-        ]);
+        try {
+            $opportunity = $this->opportunityService->lose($opportunity, auth()->id(), $reason);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
+
+        return $this->success(new OpportunityResource($opportunity), 'Opportunity marked as lost.');
     }
 
     /**
@@ -186,12 +199,13 @@ class OpportunityController extends Controller
      */
     public function reopen(Opportunity $opportunity): JsonResponse
     {
-        $opportunity = $this->opportunityService->reopen($opportunity);
+        try {
+            $opportunity = $this->opportunityService->reopen($opportunity, auth()->id());
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Opportunity reopened.',
-            'data' => new OpportunityResource($opportunity),
-        ]);
+        return $this->success(new OpportunityResource($opportunity), 'Opportunity reopened.');
     }
 
     /**
@@ -201,7 +215,7 @@ class OpportunityController extends Controller
     {
         $pipeline = $this->opportunityService->getPipelineSummary();
 
-        return response()->json(['data' => $pipeline]);
+        return $this->success($pipeline);
     }
 
     /**
@@ -213,7 +227,7 @@ class OpportunityController extends Controller
             $request->assigned_to ? (int) $request->assigned_to : null
         );
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -224,6 +238,6 @@ class OpportunityController extends Controller
         $months = (int) ($request->months ?? 6);
         $forecast = $this->opportunityService->getForecast(min($months, 12));
 
-        return response()->json(['data' => $forecast]);
+        return $this->success($forecast);
     }
 }

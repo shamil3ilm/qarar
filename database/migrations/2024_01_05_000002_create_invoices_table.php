@@ -25,8 +25,8 @@ return new class extends Migration
             ])->default('standard');
 
             // Related documents
-            $table->foreignId('quotation_id')->nullable()->constrained('quotations')->nullOnDelete();
-            $table->foreignId('sales_order_id')->nullable()->constrained('sales_orders')->nullOnDelete();
+            $table->unsignedBigInteger('quotation_id')->nullable();
+            $table->unsignedBigInteger('sales_order_id')->nullable();
             $table->foreignId('original_invoice_id')->nullable()->constrained('invoices')->nullOnDelete(); // For credit/debit notes
 
             // Customer info (denormalized for historical record)

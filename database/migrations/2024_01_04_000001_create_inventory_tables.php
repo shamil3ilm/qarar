@@ -16,6 +16,7 @@ return new class extends Migration
             $table->string('symbol', 10); // e.g., "kg", "pc", "box"
             $table->foreignId('base_unit_id')->nullable()->constrained('units_of_measure')->nullOnDelete();
             $table->decimal('conversion_factor', 18, 8)->default(1); // How many base units
+            $table->string('code', 20)->nullable(); // e.g., "KG", "PCS"
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 

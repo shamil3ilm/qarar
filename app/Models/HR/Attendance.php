@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Attendance extends Model
 {
-    use BelongsToOrganization;
+    use HasFactory, BelongsToOrganization, HasAuditTrail;
 
     public const STATUS_PRESENT = 'present';
     public const STATUS_ABSENT = 'absent';
@@ -103,6 +105,14 @@ class Attendance extends Model
 
         if ($this->break_start && $this->break_end) {
             $breakMinutes = $this->break_start->diffInMinutes($this->break_end);
+
+            if ($breakMinutes < 0) {
+                throw new \App\Exceptions\ApiException('Break end time cannot be before break start time.');
+            }
+
+            if ($breakMinutes > $totalMinutes) {
+                throw new \App\Exceptions\ApiException('Break duration cannot exceed total shift duration.');
+            }
         }
 
         return round(($totalMinutes - $breakMinutes) / 60, 2);

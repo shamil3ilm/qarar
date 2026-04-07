@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Models\HR;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeSalaryComponent extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'employee_salary_id',
         'salary_component_id',

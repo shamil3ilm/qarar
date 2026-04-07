@@ -14,6 +14,7 @@ class ProductResource extends JsonResource
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
             'sku' => $this->sku,
             'name' => $this->name,
             'description' => $this->description,
@@ -23,7 +24,6 @@ class ProductResource extends JsonResource
 
             'purchase_price' => $this->purchase_price,
             'selling_price' => $this->selling_price,
-            'cost_price' => $this->cost_price,
             'costing_method' => $this->costing_method,
 
             'has_variants' => $this->has_variants,
@@ -34,8 +34,16 @@ class ProductResource extends JsonResource
             'reorder_quantity' => $this->reorder_quantity,
 
             'weight' => $this->weight,
-            'dimensions' => $this->dimensions,
+            'dimensions' => [
+                'length' => $this->length ?? null,
+                'width' => $this->width ?? null,
+                'height' => $this->height ?? null,
+            ],
             'image_url' => $this->image_url,
+
+            'category_id' => $this->category_id,
+            'unit_id' => $this->unit_id,
+            'tax_category_id' => $this->tax_category_id,
 
             'category' => $this->whenLoaded('category', fn() => new CategoryResource($this->category)),
             'unit' => $this->whenLoaded('unit', fn() => [

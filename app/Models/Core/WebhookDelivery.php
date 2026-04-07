@@ -6,10 +6,13 @@ namespace App\Models\Core;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class WebhookDelivery extends Model
 {
+    use HasFactory;
     public const STATUS_PENDING = 'pending';
     public const STATUS_SUCCESS = 'success';
     public const STATUS_FAILED = 'failed';
@@ -105,6 +108,10 @@ class WebhookDelivery extends Model
      */
     public function markAsSuccess(int $httpStatus, ?string $responseBody, ?array $responseHeaders, int $durationMs): void
     {
+        if ($responseBody && strlen($responseBody) > 10000) {
+            Log::debug('WebhookDelivery response truncated', ['delivery_id' => $this->id, 'original_length' => strlen($responseBody)]);
+        }
+
         $this->update([
             'status' => self::STATUS_SUCCESS,
             'http_status' => $httpStatus,
@@ -122,6 +129,15 @@ class WebhookDelivery extends Model
      */
     public function markAsFailed(string $errorMessage, ?int $httpStatus = null, ?string $responseBody = null, int $durationMs = 0): void
     {
+        // Read a fresh copy to get the latest attempt count and avoid off-by-one errors
+        // when the model was loaded before a previous retry incremented the counter.
+        $fresh = $this->fresh();
+        $currentAttempt = $fresh ? $fresh->attempt : $this->attempt;
+
+        if ($responseBody && strlen($responseBody) > 10000) {
+            Log::debug('WebhookDelivery response truncated', ['delivery_id' => $this->id, 'original_length' => strlen($responseBody)]);
+        }
+
         $shouldRetry = $this->shouldRetry();
 
         $this->update([
@@ -130,7 +146,7 @@ class WebhookDelivery extends Model
             'response_body' => $responseBody ? substr($responseBody, 0, 10000) : null,
             'duration_ms' => $durationMs,
             'error_message' => $errorMessage,
-            'attempt' => $this->attempt + ($shouldRetry ? 1 : 0),
+            'attempt' => $currentAttempt + ($shouldRetry ? 1 : 0),
             'next_retry_at' => $shouldRetry ? now()->addSeconds($this->getRetryDelay()) : null,
         ]);
 

@@ -6,11 +6,12 @@ namespace App\Models\Manufacturing;
 
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasUuid;
-use App\Models\Core\User;
+use App\Models\User;
 use App\Models\Inventory\Product;
 use App\Models\Inventory\ProductVariant;
 use App\Models\Inventory\UnitOfMeasure;
 use App\Models\Inventory\Warehouse;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -18,7 +19,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class BomTemplate extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasFactory, HasUuid, SoftDeletes;
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_ACTIVE = 'active';

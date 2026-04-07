@@ -12,8 +12,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Comment extends Model
 {
+    use HasFactory;
     use BelongsToOrganization, SoftDeletes;
 
     protected $fillable = [

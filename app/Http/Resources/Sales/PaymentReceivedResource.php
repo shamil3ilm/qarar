@@ -4,19 +4,24 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Sales;
 
+use App\Traits\MasksSensitiveData;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class PaymentReceivedResource extends JsonResource
 {
+    use MasksSensitiveData;
     public function toArray(Request $request): array
     {
         return [
             'id' => $this->id,
             'uuid' => $this->uuid,
+            'organization_id' => $this->organization_id,
+            'branch_id' => $this->branch_id,
             'payment_number' => $this->payment_number,
             'payment_date' => $this->payment_date?->toDateString(),
             'status' => $this->status,
+            'customer_id' => $this->customer_id,
 
             'customer' => $this->whenLoaded('customer', fn() => [
                 'id' => $this->customer->id,
@@ -27,7 +32,7 @@ class PaymentReceivedResource extends JsonResource
             'bank_account' => $this->whenLoaded('bankAccount', fn() => [
                 'id' => $this->bankAccount->id,
                 'name' => $this->bankAccount->account_name,
-                'number' => $this->bankAccount->account_number,
+                'number' => $this->maskBankAccount($this->bankAccount->account_number),
             ]),
 
             'payment_method' => $this->payment_method,

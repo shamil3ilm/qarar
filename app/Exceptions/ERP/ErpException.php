@@ -34,13 +34,18 @@ abstract class ErpException extends Exception
         return $this->httpStatus;
     }
 
-    public function render(): JsonResponse
+    public function render(\Illuminate\Http\Request $request): JsonResponse
     {
         return response()->json([
-            'error' => [
-                'code' => $this->errorCode,
+            'success' => false,
+            'error'   => [
+                'code'    => $this->errorCode,
                 'message' => $this->getMessage(),
                 'context' => $this->context,
+            ],
+            'meta' => [
+                'request_id' => $request->header('X-Request-ID', (string) \Illuminate\Support\Str::uuid()),
+                'timestamp'  => now()->toIso8601String(),
             ],
         ], $this->httpStatus);
     }

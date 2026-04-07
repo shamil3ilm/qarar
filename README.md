@@ -1,207 +1,101 @@
-# ERP Backend System
+# ERP Backend
 
-A comprehensive, multi-tenant ERP system built with Laravel 12 for GCC (Saudi Arabia, UAE, Qatar, Oman, Bahrain, Kuwait) and Indian markets.
+A full-featured, multi-tenant ERP backend built with Laravel 12, designed for businesses in the **GCC region** (Saudi Arabia, UAE, Qatar, Oman, Bahrain, Kuwait) and **India**. Built to SAP-parity standards — covering Financial Accounting, Controlling, HR, Inventory, Manufacturing, Sales, Purchasing, Project System, and Compliance.
 
-## Features Overview
+**1,064 models · 384 controllers · 386 services · 3,360 API routes · 381 migrations · 714 tests**
 
-### Core Features
-- **Multi-Tenant Architecture** - Organizations → Branches with complete data isolation
-- **Role-Based Access Control** - Granular permissions with module-level access
-- **Module Selection** - Enable/disable modules per organization (subscription tiers)
-- **Multi-Currency** - SAR, AED, QAR, OMR, BHD, KWD, INR, USD, EUR with exchange rates
-- **Localization** - Arabic, English, Hindi with RTL support
-- **Audit Trail** - Complete activity logging for compliance
+---
 
-### Modules
+## What is this?
 
-#### 📊 Accounting
-- Chart of Accounts (hierarchical)
-- Double-entry Journal Entries
-- Fiscal Year Management
-- Bank Accounts & Reconciliation
-- Multi-currency transactions
-- Financial Reports (P&L, Balance Sheet, Trial Balance)
+This is the backend API for an enterprise-grade ERP system. It exposes a versioned REST API (`/api/v1`) consumed by web and mobile frontends. Every feature is multi-tenant — organisations are fully isolated at the database level. The system targets GCC and Indian regulatory requirements out of the box (ZATCA e-invoicing, VAT, GST, GOSI, EOSB).
 
-#### 📦 Inventory
-- Products & Services
-- Categories (hierarchical)
-- Multiple Warehouses
-- Stock Levels & Movements
-- Stock Adjustments & Transfers
-- Reorder Alerts
-- Batch/Serial Number Tracking
+---
 
-#### 💰 Sales
-- Customers Management
-- Quotations → Sales Orders → Invoices
-- Credit Notes & Debit Notes
-- Payments Received
-- Advance Payments & Customer Wallet
-- Bulk Sales
-- E-commerce Integration
+## Highlights
 
-#### 🛒 Purchase
-- Suppliers Management
-- Purchase Orders → Bills
-- Payments Made
-- Supplier Advances
-- Debit Notes
+- **Financial Accounting** — General ledger, AR, AP, fixed assets, bank reconciliation, multi-currency, consolidation, period-end cockpit
+- **Controlling** — Cost centre accounting, internal orders, product costing, profitability analysis, activity-based costing
+- **HR & Payroll** — Employee master, attendance, leave, payroll runs, GOSI, EOSB, recruitment, performance, training
+- **Inventory & Warehouse** — Products, batches, warehouses, stock movements, MRP, wave picking, physical inventory
+- **Sales & Distribution** — Quotations, sales orders, invoices, pricing conditions, ATP check, intercompany billing
+- **Procurement** — Purchase requisitions, RFQ, purchase orders, goods receipt, 3-way match, vendor management
+- **Manufacturing** — BOMs, work orders, MRP, quality management, production costing, capacity planning
+- **Plant Maintenance** — Equipment master, maintenance plans/orders, work permits (PTW), fleet management
+- **Project System** — WBS hierarchy, resource planning, budget control, earned value management
+- **CRM** — Leads, opportunities, service tickets, territory management, campaigns
+- **Real Estate (RE-FX)** — Portfolios, properties, rental units, lease contracts, IFRS 16 schedules, service charge settlements
+- **Trade & Customs** — Letters of credit, landed costs, trade agreements, customs declarations, excise duties
+- **E-commerce** — Multi-channel order sync, payment gateway integration, product mapping, online payments
+- **Loyalty Management** — Customer tiers, points earning rules, rewards catalog, redemption
+- **Omnichannel Messaging** — WhatsApp/SMS/email templates, message campaigns, conversation management
+- **Task Boards** — Kanban boards, sprints, checklists, time entries, dependencies
+- **Document Vault** — Versioned document storage, folder hierarchy, permissions, digital signatures
+- **Expense Management** — Expense reports, receipt capture, recurring expenses, budget allocation
+- **Budget Control** — Cross-module budgets, commitments, revisions, availability control
+- **Calendar** — Events, attendees, reminders, recurring rules, task integration
+- **Automation Engine** — Rule-based triggers, email templates, scheduled automations
+- **GCC Compliance** — ZATCA Phase 2 (Saudi e-invoicing), VAT (UAE/Qatar/Oman/Bahrain/Kuwait)
+- **India Compliance** — GST (IGST/CGST/SGST), TDS/TCS, HSN/SAC codes, GSTR data preparation
+- **Platform** — RBAC, approval workflows, webhooks, audit trail, document vault, custom fields, notifications, 2FA
+- **Admin / Super Admin** — Platform administration, IP allowlists, support tickets, system announcements, feature flags
 
-#### 👥 Human Resources
-- Employees & Departments
-- Designations & Organization Chart
-- Attendance Management
-- Leave Management
-- Payroll Processing
-- Statutory Deductions (GOSI, EPF, ESI)
-- Employee Loans
-- Document Management
-
-#### 📈 CRM
-- Leads Management
-- Opportunities Pipeline
-- Activities & Follow-ups
-- Lead Scoring
-- Conversion to Customer
-
-#### 🏭 Manufacturing
-- Bill of Materials (BOM)
-- Work Orders
-- Production Tracking
-
-#### 🏪 POS (Point of Sale)
-- Quick Sales
-- Multiple Payment Methods
-- Receipt Printing
-
-### Additional Features
-
-#### 🔐 Security
-- JWT Authentication
-- Two-Factor Authentication (2FA)
-- Login History & Session Management
-- IP-based Access Control
-- Password Policies
-
-#### 📄 Document Vault
-- File Storage with Versioning
-- Folder Organization
-- Access Permissions
-- Digital Signatures
-- External Sharing with Expiry
-- Document Expiry Alerts
-
-#### ✅ Approval Workflows
-- Multi-step Approval Chains
-- Role-based Approvers
-- Delegation Support
-- Timeout & Escalation
-- Approval History
-
-#### 💳 Wallet & Credits
-- Customer/Supplier Wallets
-- Advance Payments
-- Credit Notes
-- Automatic Balance Adjustment
-- Refund Management
-
-#### 🔄 Automation Rules
-- Event-based Triggers
-- Condition Matching
-- Auto-categorization
-- Email Notifications
-- Scheduled Actions
-
-#### 📅 Calendar & Tasks
-- Personal & Shared Calendars
-- Events with Recurrence
-- Task Management
-- Reminders
-- Meeting Scheduling
-
-#### 💸 Expense Management
-- Expense Categories
-- Receipt Scanning (OCR)
-- Expense Reports
-- Budget Tracking
-- Recurring Expenses
-- Reimbursements
-
-#### 🏦 Bank Integration
-- Bank Account Management
-- Statement Import (CSV, OFX, MT940)
-- Auto-matching Rules
-- Bank Reconciliation
-
-#### 📊 Reports & Analytics
-- Daily/Monthly/Yearly Summaries
-- Scheduled Reports
-- Custom Report Builder
-- Export to PDF/Excel/CSV
-- Dashboard Widgets
-
-#### 🔌 Integrations
-- Webhook System (30+ events)
-- E-commerce (Shopify, WooCommerce)
-- Payment Gateways (Stripe, Tap, Moyasar)
-- Import/Export System
-- REST API
-
-#### 📜 Compliance (via CompliPay)
-- ZATCA (Saudi Arabia)
-- FTA (UAE)
-- GTA (Qatar)
-- GST (India)
-- QR Code Generation
+---
 
 ## Tech Stack
 
-- **Framework**: Laravel 12
-- **Database**: MySQL 8.0+
-- **Authentication**: JWT (php-open-source-saver/jwt-auth)
-- **Queue**: Redis/Database
-- **Cache**: Redis
-- **File Storage**: Local/S3
+| Component | Technology |
+|-----------|-----------|
+| Framework | Laravel 12 |
+| Language | PHP 8.2+ with strict types |
+| Auth | JWT (`php-open-source-saver/jwt-auth`) |
+| Database | MySQL 8.0+ / PostgreSQL 14+ |
+| Test DB | SQLite (in-memory) |
+| Queue | Redis or Database driver |
+| Cache | Redis |
+| File Storage | Local / AWS S3 |
+| API | RESTful, versioned `/api/v1` |
 
-## Installation
+---
+
+## Getting Started
+
+### Requirements
+
+- PHP 8.2+
+- Composer 2
+- MySQL 8+ or PostgreSQL 14+
+- Redis (optional, for queues and cache)
+
+### Installation
 
 ```bash
-# Clone repository
-git clone <repository-url>
+# Clone and install dependencies
+git clone <repo-url>
 cd erp-backend
-
-# Install dependencies
 composer install
 
-# Copy environment file
+# Environment setup
 cp .env.example .env
-
-# Generate application key
 php artisan key:generate
-
-# Generate JWT secret
 php artisan jwt:secret
 
-# Run migrations
+# Database
 php artisan migrate
-
-# Seed default data
 php artisan db:seed
 
-# Start development server
+# Start
 php artisan serve
 ```
 
-## Environment Configuration
+The API is now available at `http://localhost:8000/api/v1`.
+
+### Environment Variables
 
 ```env
-# Application
 APP_NAME="ERP System"
-APP_ENV=local
-APP_DEBUG=true
 APP_URL=http://localhost:8000
 
-# Database
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
 DB_PORT=3306
@@ -209,170 +103,838 @@ DB_DATABASE=erp
 DB_USERNAME=root
 DB_PASSWORD=
 
-# JWT
-JWT_SECRET=
-JWT_TTL=60
+JWT_SECRET=          # generated by php artisan jwt:secret
+JWT_TTL=60           # token lifetime in minutes
 
-# CompliPay (Compliance Gateway)
-COMPLIPAY_URL=https://api.complipay.com/v1
-COMPLIPAY_API_KEY=
-
-# Queue
 QUEUE_CONNECTION=database
-
-# Cache
 CACHE_DRIVER=redis
+
+# Saudi Arabia ZATCA e-invoicing
+ZATCA_INTEGRATION_ENABLED=true
+ZATCA_INTEGRATION_URL=http://your-zatca-service/api/v1
+ZATCA_INTEGRATION_API_KEY=
+ZATCA_INTEGRATION_TIMEOUT=30
+ZATCA_WEBHOOK_SECRET=
+
+# File storage (leave blank for local)
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=
+AWS_BUCKET=
 ```
 
-## API Structure
+---
+
+## API
+
+All endpoints are prefixed with `/api/v1`. Every request to a protected endpoint requires:
+
+```
+Authorization: Bearer <jwt-token>
+```
+
+**Response envelope:**
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": { },
+  "meta": { "request_id": "uuid", "timestamp": "2026-03-29T10:00:00Z" }
+}
+```
+
+**Error envelope:**
+```json
+{
+  "success": false,
+  "error": { "code": "VALIDATION_ERROR", "message": "The field is required." },
+  "meta": { "request_id": "uuid", "timestamp": "2026-03-29T10:00:00Z" }
+}
+```
+
+### Route Groups
 
 ```
 /api/v1/
-├── auth/                 # Authentication
-│   ├── login
-│   ├── register
-│   ├── logout
-│   └── refresh
-├── core/                 # Core module
-│   ├── organization
-│   ├── branches
-│   ├── users
-│   ├── roles
-│   ├── permissions
-│   ├── settings
-│   ├── modules
-│   ├── notifications
-│   ├── imports
-│   ├── exports
-│   └── webhooks
-├── accounting/           # Accounting module
-│   ├── accounts
-│   ├── journals
-│   ├── fiscal-years
-│   └── bank-accounts
-├── inventory/            # Inventory module
-│   ├── products
-│   ├── categories
-│   ├── warehouses
-│   └── stock
-├── sales/                # Sales module
-│   ├── customers
-│   ├── quotations
-│   ├── invoices
-│   ├── credit-notes
-│   └── payments
-├── purchase/             # Purchase module
-│   ├── suppliers
-│   ├── orders
-│   ├── bills
-│   └── payments
-├── hr/                   # HR module
-│   ├── employees
-│   ├── departments
-│   ├── attendance
-│   ├── leave
-│   └── payroll
-├── crm/                  # CRM module
-│   ├── leads
-│   ├── opportunities
-│   └── activities
-└── manufacturing/        # Manufacturing module
-    ├── bom
-    └── work-orders
+├── auth/                     # Login, register, 2FA, password reset, session management
+├── core/                     # Organisation, branches, users, roles, settings, notifications
+│   ├── approval-workflows/   # Multi-step approvals with delegation and escalation
+│   ├── custom-fields/        # User-defined fields on any entity
+│   ├── webhooks/             # Outbound webhook subscriptions (30+ events)
+│   └── feature-flags/        # Per-org feature toggles
+│
+├── accounting/               # FI: chart of accounts, journals, fiscal years
+│   ├── bank-reconciliations/ # EBS import (MT940/CAMT.053), auto/manual matching
+│   ├── asset-accounting/     # Fixed assets, depreciation runs
+│   ├── loans/                # Loan schedule, repayments, amortisation
+│   ├── multi-currency/       # Exchange rates, period-end revaluation
+│   ├── financial-close/      # Period-end cockpit, task dependencies, CFO sign-off
+│   ├── period-lock/          # Posting period control with override workflow
+│   ├── intercompany/         # IC transfers, billing, auto AR/AP journals
+│   ├── payment-files/        # SEPA pain.001, SWIFT MT103, ACH NACHA, BACS
+│   ├── payment-runs/         # AP automatic payment run
+│   ├── dunning/              # Multi-level dunning letters
+│   ├── credit-management/    # Credit limits, exposure, holds
+│   ├── consolidation/        # Multi-entity consolidation, IC elimination
+│   └── ...                   # Parked documents, accruals/deferrals, document splitting
+│
+├── controlling/              # CO: cost centres, cost elements, budgets
+│   ├── profit-centers/       # Profit centre accounting
+│   ├── internal-orders/      # Order types, settlement, budget control
+│   ├── copa/                 # Profitability analysis, plan vs actual
+│   ├── costing-sheets/       # Overhead calculation runs
+│   ├── assessment-cycles/    # Secondary cost allocation with GL posting
+│   ├── distribution-cycles/  # Primary cost distribution
+│   ├── variance-analysis/    # Standard vs actual cost variance
+│   └── transfer-pricing/     # Intercompany pricing
+│
+├── inventory/                # MM: products, warehouses, stock levels
+│   ├── stock/                # Stock levels, movements, reorder points
+│   ├── goods-issues/         # Production / sales / scrap goods issues
+│   ├── physical-inventory/   # Cycle count, difference posting
+│   ├── batch-management/     # Batch master, FEFO/FIFO picking, where-used
+│   └── wave/                 # Wave picking, packing
+│
+├── purchase/                 # MM-PUR: full procure-to-pay
+│   ├── purchase-orders/      # PO with goods receipt flow
+│   ├── goods-receipts/       # MIGO GR + 3-way match
+│   ├── bills/                # Vendor invoice verification (MIRO)
+│   ├── rfq/                  # Request for quotation, quote comparison
+│   ├── contracts/            # Outline and scheduling agreements
+│   └── supplier-performance/ # Vendor scorecard
+│
+├── sales/                    # SD: full order-to-cash
+│   ├── invoices/             # Billing documents with tax (VAT/GST)
+│   ├── sales-orders/         # Order management, delivery creation
+│   ├── quotations/           # Pre-sales quotation flow
+│   ├── credit-notes/         # Returns and credits
+│   ├── pricing-conditions/   # Condition technique (VKORG-style)
+│   └── intercompany-sales/   # IC billing with auto AR/AP posting
+│
+├── hr/                       # HCM: employees, time, payroll
+│   ├── payroll/              # Payroll runs, payslips, off-cycle
+│   ├── leave-management/     # Leave types, requests, balances, accruals
+│   ├── performance/          # Goals, appraisals, succession
+│   ├── recruitment/          # Job postings → applications → offers
+│   ├── training/             # Courses, enrolment, certifications
+│   ├── eosb/                 # End-of-service benefits (GCC)
+│   ├── gosi/                 # GOSI contributions (Saudi Arabia)
+│   └── time-evaluation/      # CATS-style time evaluation
+│
+├── manufacturing/            # PP: BOMs, work orders, MRP
+│   ├── quality/              # Inspection lots, usage decisions, SPC
+│   ├── mrp/                  # MRP run, planned orders, demand collection
+│   ├── capacity/             # Capacity planning and leveling
+│   └── product-costing/      # CO-PC integration
+│
+├── maintenance/              # PM: equipment, plans, orders
+│   ├── permits/              # Work permits (PTW) with safety checks
+│   └── fleet/                # Vehicle management, mileage, fuel logs
+│
+├── ps/                       # PS: projects, WBS, earned value
+│   ├── budget/               # Budget versions, availability control
+│   └── evm/                  # EVM snapshots (BCWS/BCWP/ACWP, SPI, CPI)
+│
+├── crm/                      # Leads, opportunities, activities
+│   ├── service-tickets/      # SLA-based ticket management
+│   └── territory/            # Territory hierarchy, routing rules
+│
+├── compliance/               # ZATCA webhook receiver, onboarding proxy
+├── tax/                      # VAT (GCC), GST/TDS (India), HSN/SAC codes
+│   └── customs/              # Customs declarations, tariff codes, excise duties
+│
+├── real-estate/              # RE-FX: portfolios, properties, rental units
+│   ├── lease-contracts/      # IFRS 16 schedules, lease modifications
+│   └── service-charges/      # Service charge allocations, settlement runs
+│
+├── trade/                    # Letters of credit, incoterms, trade agreements
+│   └── landed-costs/         # Landed cost vouchers, charge allocation
+│
+├── ecommerce/                # Multi-channel sync, payment gateways, online orders
+│
+├── tm/                       # Transportation Management: carriers, freight rates
+│   ├── tender/               # Freight tendering, bid management
+│   └── load-plans/           # Load building, consolidation
+│
+├── loyalty/                  # Customer tiers, points, rewards catalog, redemption
+│
+├── messaging/                # Omnichannel messaging, templates, campaigns
+│
+├── task-boards/              # Kanban boards, sprints, task management
+│
+├── documents/                # Document vault: versioning, permissions, signatures
+│
+├── expenses/                 # Expense reports, receipts, recurring expenses
+│
+├── budgets/                  # Cross-module budget control, commitments, revisions
+│
+├── calendar/                 # Events, attendees, reminders, recurring rules
+│
+├── automation/               # Rule engine, email templates, scheduled automations
+│
+├── admin/                    # Platform administration, support tickets, announcements
+│
+└── reports/                  # Cross-module analytics and exports
 ```
 
-## Database Schema
+---
 
-The system uses 100+ tables organized by module:
+## Modules
 
-### Core Tables
-- `organizations`, `branches`, `users`, `roles`, `permissions`
-- `audit_logs`, `activity_logs`, `notifications`
-- `settings`, `number_sequences`
+### Module 1 — Financial Accounting (FI)
 
-### Accounting Tables
-- `chart_of_accounts`, `journal_entries`, `journal_entry_lines`
-- `fiscal_years`, `currencies`, `exchange_rates`
-- `bank_accounts`, `bank_transactions`, `bank_reconciliations`
+SAP FI sub-module coverage:
 
-### Sales Tables
-- `contacts`, `invoices`, `invoice_lines`
-- `quotations`, `sales_orders`, `payments_received`
-- `credit_notes`, `advance_payments`, `wallets`
+#### FI-GL — General Ledger
 
-### Inventory Tables
-- `products`, `categories`, `warehouses`
-- `stock_levels`, `stock_movements`, `stock_adjustments`
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Chart of accounts (operating / group / country) | ✅ | `accounts` table, account types, account groups |
+| Account master with cost/profit centre assignment | ✅ | `Account` model — `cost_center_id`, `profit_center_id` |
+| Double-entry journal posting | ✅ | `JournalEntry` + `JournalEntryLine`, debit/credit balance enforced |
+| Document parking (held documents) | ✅ | `ParkedDocument`, release to post |
+| Recurring entries | ✅ | `RecurringProfile` + `RecurringProfileLog`, console-scheduled |
+| Accruals & deferrals | ✅ | `AccrualDeferral` with amortisation schedule |
+| Fiscal year variants | ✅ | `FiscalYear`, `AccountingPeriod`, 12/13-period support |
+| Posting period control | ✅ | `PeriodLock` with override workflow |
+| Posting validation & substitution rules | ✅ | `PostingValidationRule`, dry-run evaluate endpoint |
+| Document splitting | ✅ | `DocumentSplittingRule`, segment-based splitting |
+| Foreign currency valuation | ✅ | `CurrencyRevaluation`, `ForexGainLossEntry` |
+| Multi-currency posting | ✅ | Local + foreign currency + exchange rate on all transactions |
+| Financial statements (P&L, BS, TB, CF) | ✅ | `FinancialReportService` |
+| Consolidation (FI-LC) | ✅ | `ConsolidationGroup`, `EliminationEntry`, IC reconciliation |
+| Special purpose ledger | ✅ | `SpecialLedger`, `SpecialLedgerEntry`, mapping rules |
+| Intercompany posting | ✅ | `InterCompanyTransfer`, auto AR/AP journal on IC billing |
+| Carry-forward | ✅ | `CarryForwardRun`, P&L → retained earnings |
+| Statistical postings | ✅ | `StatisticalKeyFigure`, `StatisticalKeyFigureValue` |
+| Parallel accounting / ledgers | ✅ | `ParallelLedger`, `ParallelLedgerEntry`, FAGL_MIG-style migration — multiple accounting principles (IFRS/local GAAP) |
+| CO reconciliation ledger | ✅ | `CoReconciliationEntry`, KALC-style: CO → FI bridge postings with GL auto-creation |
+| XBRL regulatory filings | ✅ | `XbrlTaxonomy`, `XbrlFiling`, `XbrlFilingConcept` — iXBRL output, validation, submission |
+| eBAM (Electronic Bank Account Management) | ✅ | `BankAccountRequest`, request → approve → execute workflow, EBAM-style |
+| Foreign currency auto-revaluation | ✅ | `CurrencyRevaluation`, FAGL_FC_VAL-style batch run — foreign-currency GL accounts, gain/loss posting |
 
-### HR Tables
-- `employees`, `departments`, `designations`
-- `attendance_records`, `leave_requests`, `leave_balances`
-- `payroll_periods`, `payslips`, `salary_components`
+**FI-GL gap coverage complete.** All major GL sub-processes implemented including parallel accounting (FAGL_MIG), CO reconciliation ledger (KALC), XBRL filings, and eBAM.
+
+---
+
+#### FI-AR — Accounts Receivable
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Customer invoicing | ✅ | `Invoice`, `InvoiceLine`, full VAT/GST support |
+| Payment received / clearing | ✅ | `PaymentReceived`, partial and full clearing |
+| Customer advance (down payment) | ✅ | `CustomerAdvance`, wallet-based advance management |
+| Credit management | ✅ | `CreditLimit`, `CreditExposure`, `CreditHold` |
+| Dunning | ✅ | `DunningRun`, `DunningLevel`, `DunningNotice`, multi-level letters |
+| Collections worklist | ✅ | `CollectionsWorklist`, promise-to-pay tracking |
+| Dispute management | ✅ | `DisputeCase`, dispute resolution workflow |
+| Direct debit (SEPA DD) | ✅ | `DirectDebitMandate`, `DirectDebitCollection` |
+| Customer credit notes | ✅ | `CreditNote`, `SalesReturn` |
+| Customer account statement | ✅ | `AccountStatementController`, period-based statement |
+| Interest on overdue AR | ✅ | `ArInterestRunService` — preview + execute; simple/365 calculation, DR AR / CR Interest Income (SAP F.24/F.26) |
+| Installment payment plans (F-36) | ✅ | `InstallmentPlan`, `InstallmentSchedule` — equal or custom schedule, activate/cancel, per-instalment payment recording, overdue marking |
+| Payment tolerance / clearing variance | ✅ | `PaymentToleranceGroup`, `PaymentToleranceItem` — OBA3/OBB8 tolerance rules, evaluate + write-off difference to GL |
+| Withholding tax (WHT) | ✅ | `WithholdingTaxCode`, `WithholdingTaxLine` — calculate, apply, issue certificate, summary report |
+
+---
+
+#### FI-AP — Accounts Payable
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Vendor invoice (bill) | ✅ | `Bill`, `BillLine`, 3-way match (PO → GR → Bill) |
+| Payment made / clearing | ✅ | `PaymentMade`, partial payment, bank account selection |
+| Vendor advance | ✅ | `VendorAdvance`, advance request → disbursement |
+| Automatic payment run | ✅ | `PaymentRun`, `PaymentRunItem`, due-date based selection |
+| Payment medium formats | ✅ | SEPA pain.001.001.03, SWIFT MT103, ACH NACHA, BACS |
+| Payment file management | ✅ | `PaymentFile`, submit → acknowledge workflow |
+| Check management | ✅ | `CheckBook`, `CheckRegisterEntry`, void/reissue |
+| Supplier credit notes | ✅ | `SupplierCredit` |
+| Outline / scheduling agreements | ✅ | `OutlineAgreement`, ERS (Evaluated Receipt Settlement) |
+| 3-way match (MIRO) | ✅ | `GoodsReceiptService::runThreeWayMatch()`, qty/price/line tolerance |
+| AP payment block / unblock | ✅ | `ContactPaymentBlock` — FBL1N-style block with reason, audit trail; blocks contact from payment runs |
+| Installment payment plans (F-59) | ✅ | Same `InstallmentPlan` service as FI-AR — supports `bill` document type |
+
+---
+
+#### FI-AA — Asset Accounting
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Asset master record | ✅ | `FixedAsset`, `AssetCategory` |
+| Asset acquisition / capitalisation | ✅ | `AssetTransaction` (acquisition, improvement, transfer, retirement) |
+| Depreciation areas & methods | ✅ | Straight-line, declining balance, units-of-production |
+| Depreciation run | ✅ | `DepreciationRun`, `DepreciationRunLine`, GL auto-posting |
+| Asset retirement / disposal | ✅ | Gain/loss on disposal journal entries |
+| Asset transfer between cost centres | ✅ | Asset transfer transaction type |
+| Asset under construction (AuC) | ✅ | `is_auc` flag, `AssetAccountingService::settleAuC()` — SAP AIAB/AIBU settlement with GL posting |
+| Component accounting (AS02) | ✅ | `AssetComponent` sub-records per fixed asset — independent useful life, cost, depreciation, partial retirement (ABAVN) |
+| Asset transfer between company codes (ABUMN) | ✅ | `AssetTransfer` — single-step inter-company-code transfer, retirement + acquisition GL entries |
+| IFRS 16 lease accounting | ✅ | `LeaseContract`, `LeaseSchedule` — ROU asset + lease liability, amortisation posting, straight-line operating lease expense |
+
+---
+
+#### FI-BL — Bank Accounting
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Bank account master | ✅ | `BankAccount` with GL link, IBAN, BIC |
+| Electronic Bank Statement (EBS) | ✅ | `EbsParserService`: MT940 + CAMT.053, auto-creates `BankTransaction` |
+| Bank reconciliation | ✅ | `BankReconciliation`, auto-match + manual-match, complete |
+| Auto-matching rules | ✅ | `BankMatchingRule`, amount/reference/date-based |
+| Cash journal / Petty cash | ✅ | `PettyCashFund`, `PettyCashTransaction`, replenishment workflow |
+| Bank guarantee management | ✅ | `BankGuarantee`, issuance/expiry/release lifecycle |
+| Cash flow forecast | ✅ | `CashFlowForecast`, `CashFlowScenario`, liquidity planning |
+| Bank position | ✅ | `BankPosition`, intraday liquidity monitoring |
+| Treasury investments | ✅ | `TreasuryInvestment` |
+| Loans (FI-LA) | ✅ | `Loan`, `LoanSchedule`, `LoanPayment`, amortisation table |
+| House bank master (FI12) | ✅ | `HouseBank`, `HouseBankAccount` — logical bank hierarchy, account purpose, daily limit, default bank |
+| Payment advices (FBZP) | ✅ | `PaymentAdvice` — outgoing/incoming, draft → sent → acknowledged, auto-numbered, outstanding summary |
+
+---
+
+#### FI Period-End Closing
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Financial Close Cockpit | ✅ | `FinancialClosePeriod`, `FinancialCloseTask`, template-based task lists |
+| Task dependency enforcement | ✅ | `canStartTask()` checks predecessor completion |
+| Task assignment & skip | ✅ | `assignTask()`, `skipTask()` with mandatory reason |
+| CFO sign-off | ✅ | `signOff()` on periods — `signed_off_by/at` recorded |
+| Period lock | ✅ | `PeriodLock`, override workflow with approver |
+| Carry-forward run | ✅ | `CarryForwardRun`, P&L → retained earnings journal |
+
+---
+
+### Module 2 — Controlling (CO)
+
+#### CO-CCA — Cost Centre Accounting
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Cost centre master (hierarchical) | ✅ | `CostCenter`, parent-child structure, manager/department assignment |
+| Cost centre deactivation | ✅ | `POST /controlling/cost-centers/{id}/deactivate` |
+| Employee assignment to cost centre | ✅ | `POST /controlling/cost-centers/{id}/assign`, split % supported |
+| Cost centre financial report | ✅ | `GET /controlling/cost-centers/{id}/report?from=&to=` |
+| Cost element master (primary/secondary) | ✅ | `CostElement`, categories: general/depreciation/imputed/revenue/settlement |
+| Cost allocations (fixed/% /activity) | ✅ | `CostAllocation`, post to GL via `postAllocation()` |
+| Cost centre budgets | ✅ | `CostCenterBudget`, `CostCenterBudgetLine`, supplement workflow |
+| Cost splitting (fixed/variable) | ✅ | `CostSplittingRule`, `CostSplittingResult` |
+| Overhead keys | ✅ | `OverheadKey`, `OverheadKeyRate`, time-validity + per-CC overrides |
+| Statistical key figures (SKF) | ✅ | `StatisticalKeyFigure`, `StatisticalKeyFigureValue` |
+| **Assessment cycles (CO-OM)** | ✅ | `CoAssessmentCycle`, CRUD + execute + reverse + GL auto-posting |
+| **Distribution cycles (CO-OM)** | ✅ | `CoDistributionCycle`, CRUD + execute + reverse, primary cost redistribution |
+
+#### CO-ABC — Activity-Based Costing
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Activity type master | ✅ | `ActivityType`, UOM, secondary cost element assignment |
+| Activity rates | ✅ | `ActivityRate`, planned + actual per CC/period/fiscal year |
+| **Activity confirmations** | ✅ | `CoActivityConfirmation`, quantity recording, cost derivation, reversal |
+| Rate comparison | ✅ | Planned vs actual via `ActivityTypeService::setRate()` |
+
+#### CO-OPA — Internal Orders
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Order types (overhead/investment/accrual/statistical) | ✅ | `InternalOrder` with type enum |
+| Status lifecycle | ✅ | created → released → technically_completed → closed |
+| Settlement to CC / GL / WBS / PC | ✅ | `InternalOrderSettlement`, `settle()` |
+| Budget control | ✅ | `budget_amount`, committed/actual tracking |
+
+#### CO-PC — Product Costing
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Costing sheets | ✅ | `CostingSheet`, `CostingSheetRow` (base/overhead/credit rows) |
+| Overhead keys with rates | ✅ | `OverheadKey`, `OverheadKeyRate`, percentage + quantity-based |
+| Costing runs | ✅ | `CostingSheetRun`, base amounts from **actual journal entry lines** |
+| Material ledger | ✅ | `MaterialLedgerRecord`, MAP/standard price, price differences per period |
+| Period close for material ledger | ✅ | `POST /material-ledger/period-close`, closing entries |
+| Overhead GL posting | ✅ | Debit production order / credit overhead cost centre |
+| Variance analysis | ✅ | `VarianceAnalysisRun`, `VarianceAnalysisItem`, standard vs actual |
+
+#### CO-PA — Profitability Analysis
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| COPA dimensions | ✅ | `CopaDimension`: product, customer, region, sales channel, material group |
+| Actual line items | ✅ | `CopaLineItem`: revenue / COGS / gross profit / overhead / net profit |
+| Auto-posting on invoice post | ✅ | `PostCopaOnInvoicePostedListener` (queued, fires on `InvoicePosted`) |
+| Plan versions | ✅ | `CopaPlanVersion`, bulk-upsert planned line items |
+| Actual vs plan variance | ✅ | `GET /copa/variance?fiscal_year_id=&plan_version_id=` |
+| Profitability segments | ✅ | `ProfitabilitySegment`, `ProfitabilitySegmentValue` |
+| Dimension drill-down | ✅ | `GET /copa/dimension/{product_id\|contact_id\|profit_center_id}` |
+
+#### CO-PCA — Profit Centre Accounting
+
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Profit centre master (hierarchical) | ✅ | `ProfitCenter`, parent-child, manager assignment |
+| Cost centre → profit centre assignment | ✅ | `CostCenterAssignment`, split % supported |
+| Profit centre P&L report | ✅ | `GET /controlling/profit-centers/{id}/report?from=&to=` |
+| Transfer pricing (CO-PC-TPC) | ✅ | `TransferPrice`, `TransferPriceVersion`, condition records |
+
+**Remaining gaps:** IFRS 17 insurance contract accounting (out of scope for current phase).
+
+---
+
+### Module 3 — Materials Management & Sales (MM/SD)
+
+#### MM — Materials Management
+
+| Feature | Status |
+|---------|--------|
+| Purchase requisitions | ✅ |
+| RFQ / quotation comparison | ✅ |
+| Purchase orders with line items | ✅ |
+| Goods receipt (MIGO) with stock posting | ✅ |
+| 3-way match (PO → GR → Invoice) with tolerance rules | ✅ |
+| Goods issue for production / sales / scrapping | ✅ |
+| Inventory valuation (Moving Average, Standard Cost) | ✅ |
+| Material ledger with price differences | ✅ |
+| Physical inventory (cycle count / full count) | ✅ |
+| Batch management (FEFO/FIFO/LIFO picking) | ✅ |
+| Warehouse management (bins, storage types, locations) | ✅ |
+| Wave picking & packing | ✅ |
+| Cross-docking | ✅ |
+| Vendor consignment | ✅ |
+| Scheduling agreements / outline agreements | ✅ |
+| Supplier performance scoring | ✅ |
+| Reorder point monitoring | ✅ `GET /inventory/stock/reorder-points` |
+| MRP run (demand, BOM explosion, planned orders) | ✅ |
+
+#### SD — Sales & Distribution
+
+| Feature | Status |
+|---------|--------|
+| Customer master (Contact) | ✅ |
+| Quotation → Sales Order → Invoice flow | ✅ |
+| Pricing conditions (VKORG-style condition technique) | ✅ |
+| ATP (Available-to-Promise) check | ✅ |
+| Credit check on order | ✅ | `SalesOrderController::creditCheck()` + enforced in `confirm()` via `CreditManagementService` (SAP VKM1/FD32) |
+| Sales order → goods issue (delivery creation) | ✅ `POST /sales/sales-orders/{id}/create-delivery` |
+| Output determination (invoice print / email / EDI) | ✅ |
+| Intercompany sales with auto AR/AP posting | ✅ |
+| Returns, credit notes, debit notes | ✅ |
+| Customer advance / wallet | ✅ |
+| Promotions & price lists | ✅ |
+| Bulk sales | ✅ |
+| Backorder management | ✅ |
+| Revenue recognition | ✅ |
+| Billing plans | ✅ |
+
+---
+
+### Module 4 — Human Capital Management (HCM)
+
+#### Core HR
+- Employee master with personal, contract, and bank details
+- Organisational management: departments, designations, positions, reporting hierarchy
+- Employee lifecycle: onboarding, probation, confirmation, exit clearance
+- Document management per employee
+
+#### Time Management
+- Attendance recording (biometric-ready)
+- Shift management, shift planning, shift roster, shift swap requests
+- Time evaluation (CATS-style timesheet entry and approval)
+- Overtime policies and requests
+
+#### Leave Management
+- Leave types with accrual policies and tier rules
+- Leave balance management (manual + automated accrual)
+- Leave request → approval → balance deduction workflow
+- Public holiday calendar
+
+#### Payroll (PY)
+- Salary structures with earnings/deductions components
+- Payroll runs: draft → computed → approved → paid
+- Payslip generation per employee
+- Off-cycle payroll and payroll corrections
+- **GOSI** (Saudi social insurance): contribution calculation, period submission
+- **EOSB / Gratuity**: policy, provision, settlement calculation
+- WPS-ready payment file output
+
+#### Talent Management
+- Recruitment: job posting → application → interview → offer
+- Performance goals and appraisal cycles
+- Succession planning with candidate pool
+- Training courses, enrolment, certifications
+- Compensation review cycles
+- Benefits management
+
+---
+
+### Module 5 — Quality Management (QM)
+
+- Inspection lots (goods receipt, in-process, final, returns)
+- Usage decisions: accept, reject, partial accept, rework
+- Control charts (SPC): X-bar, R-chart, p-chart, c-chart with control limits
+- Audit management: audit plans, checklists, findings, reports
+- CAPA (Corrective & Preventive Action): records, actions, effectiveness reviews
+- Complaint management: intake, communications, resolution
+- Supplier quality: ratings, approved vendor lists, NCR records
+- Certificate of Analysis per batch/lot
+- Q-Info Records: quality inspection criteria per material-vendor
+- Skip-lot inspection with sampling frequency logic
+- Stability studies: protocol, sample schedule, results
+- Returns inspection: defect capture, lot disposition
+
+---
+
+### Module 6 — Plant Maintenance (PM)
+
+- Equipment master with functional location hierarchy
+- Maintenance plans: time-based and counter-based scheduling
+- Maintenance orders: create → release → complete → close
+- Counter management: reading history, threshold triggers
+- Condition-based maintenance: sensor rules, measurement recording
+- Fleet management: vehicles, assignments, mileage logs, fuel logs
+- **Work Permits (PTW)**: hot work, confined space, electrical isolation, height work, chemical, general
+  - Lifecycle: requested → approved → active → suspended → closed
+  - Mandatory safety checks with completion and sign-off
+- Cost settlement: maintenance order costs → cost centres / GL
+
+---
+
+### Module 7 — Project System (PS)
+
+- Project master with WBS element hierarchy
+- Network activities with predecessor/successor relationships
+- Project templates
+- Milestones: date-driven, billing-linked
+- Resource planning: plan vs actual, utilisation view
+- Timesheets: entry and approval
+- **Budget management**: versions (original/supplement), line items per WBS, availability control, supplement approval
+- **Revenue planning**: percentage-of-completion, milestone, fixed-amount recognition
+- Billing rules: milestone billing, resource-related billing
+- Cost settlement: rules, run to cost centres / GL
+- **Earned Value Management (EVM)**: BCWS, BCWP, ACWP snapshots; SPI, CPI, EAC calculations
+
+---
+
+### Module 8 — CRM
+
+- Leads: capture, scoring, assignment, conversion
+- Opportunities: pipeline stages, probability, close date, revenue forecast
+- Activities: calls, emails, meetings, tasks — linked to leads/opportunities
+- Service tickets: SLA policies, escalation, resolution tracking
+- Territory management: hierarchy, assignment rules, routing
+- Campaign management: segments, execution, ROI tracking
+
+---
+
+### Module 9 — GCC & India Compliance
+
+#### Saudi Arabia — ZATCA (Phase 2 e-invoicing)
+
+- `ZatcaInvoiceTransformer` — maps ERP invoice to ZATCA UBL XML payload
+- `CompliPayClient` — calls ZATCA pipeline: submit, status, validate
+- `VerifyZatcaWebhook` middleware — HMAC-SHA256 signature + replay protection (5-minute window)
+- `ZatcaWebhookController` — handles `invoice.cleared`, `invoice.reported`, `invoice.rejected`
+- `RetryComplianceSubmission` job — 5 retries, exponential backoff (5 min → 2 hrs)
+- Onboarding: CCSID request, compliance check, PCSID, certificate status
+
+#### UAE / Qatar / Oman / Bahrain / Kuwait — VAT
+- Multi-rate VAT: standard, zero-rated, exempt
+- Tax group management
+- Reverse charge mechanism
+
+#### India — GST
+- GSTIN validation, HSN/SAC code management
+- IGST / CGST / SGST / UGST split calculation
+- GSTR-1 data preparation, GSTR-3B summary
+- E-way bill data extraction
+
+#### India — TDS/TCS
+- TDS deduction at source
+- TCS on high-value / e-commerce sales
+- Certificate generation
+
+#### Customs & Excise
+- Customs declarations with line-item detail
+- Tariff code classification (HS codes)
+- Preferential duty rates and trade agreement mapping
+- Excise categories, rates, and declarations
+
+---
+
+### Module 10 — Real Estate (RE-FX)
+
+- Portfolio and property master management
+- Rental unit tracking per building/floor
+- Lease contract lifecycle: draft → active → expired → terminated
+- **IFRS 16 lease accounting**: right-of-use asset schedules, amortisation posting
+- Security deposit management
+- Service charge allocations and settlement runs
+- Contract conditions and options management
+
+---
+
+### Module 11 — Trade & International Commerce
+
+- **Letters of credit**: issuance, amendments, document tracking
+- Incoterms management
+- Trade agreements with preferential duty rates
+- **Landed costs**: voucher creation, charge allocation to purchase orders
+- Import/export shipment tracking
+- Trade document management
+
+---
+
+### Module 12 — E-commerce Integration
+
+- Multi-channel integration (EcommerceChannel)
+- Order sync with ERP sales orders
+- Product mapping between channels and inventory
+- Payment gateway management
+- Online payment tracking and reconciliation
+- Sync log and error management
+
+---
+
+### Module 13 — Transportation Management (TM)
+
+- Carrier master with performance scoring
+- Carrier service types and freight agreements
+- **Freight rate engine**: rate tables, surcharges, tiered pricing
+- Freight tendering: requests, bids, award workflow
+- Transportation orders with item-level tracking
+- **Load planning**: load building, consolidation, packing optimisation
+
+---
+
+### Module 14 — Loyalty Management
+
+- Loyalty program definition (points, tiers, cashback)
+- Customer tier management with tier rules
+- Points earning rules per transaction type
+- Rewards catalog with point redemption
+- Points transactions and balance management
+
+---
+
+### Module 15 — Omnichannel Messaging
+
+- Messaging configuration per channel (WhatsApp, SMS, email)
+- Message templates with approval workflow
+- Message campaigns: segments, scheduling, recipient management
+- Outbound message queue and delivery logging
+- Conversation management for two-way channels
+- Notification preferences per user
+
+---
+
+### Module 16 — Task Boards
+
+- Kanban boards with customisable columns
+- Board member management and access control
+- Tasks with priority, due date, assignee, labels
+- Task dependencies (blockers)
+- Checklists and checklist items
+- **Sprints**: planning, active, review, retrospective
+- Time entries per task
+- Task activity feed and watchers
+- Board templates
+
+---
+
+### Module 17 — Document Vault
+
+- Document upload with version history
+- Folder hierarchy with nested permissions
+- Document sharing with expiry and access control
+- Activity log per document
+- **Digital signatures**: request, sign, completion tracking
+
+---
+
+### Module 18 — Expense Management
+
+- Expense categories and policies
+- Expense reports: draft → submitted → approved → paid
+- Line-item expense recording with receipt capture
+- Recurring expense schedules
+- Expense budget allocation
+
+---
+
+### Module 19 — Budget Management
+
+- Cross-module budget master with line items
+- Budget revisions with revision lines
+- Budget commitments (pre-encumbrance)
+- Availability control integration with purchasing and expenses
+
+---
+
+### Module 20 — Calendar & Automation
+
+#### Calendar
+- Calendar master per user/team
+- Events with attendees, reminders, and recurrence rules
+- Task integration (calendar tasks with comments)
+
+#### Automation Engine
+- Rule-based automation triggers (record created/updated, scheduled)
+- Action types: send email, create record, update field, webhook call
+- Email template management
+- Automation schedule management
+- Execution log per rule
+
+---
+
+### Module 21 — Platform Administration
+
+- Platform admin users with roles and permissions
+- IP allowlist management for admin access
+- Organisation status management and history notes
+- Support ticket system with messaging
+- System announcements with read tracking
+- Feature flag management per organisation
+- Platform-wide settings management
+- Admin activity logging
+
+---
+
+## Architecture
+
+### Multi-Tenancy
+Every database row belonging to a tenant carries `organization_id`. Eloquent global scopes apply this filter automatically on all tenant-scoped models. No data from one organisation is ever accessible to another.
+
+### Request Lifecycle
+```
+Request → JWT middleware → validate.jwt → check.organization
+        → check.permission (RBAC) → check.module (subscription)
+        → Controller (HTTP concerns) → Service (domain logic)
+        → Model → Response
+```
+
+### Module System
+Each module can be enabled or disabled per organisation based on its subscription tier. The `check.module` middleware rejects requests to disabled modules with a `403`.
+
+### Approval Workflows
+Multi-step approval workflows are supported across all transactional entities (invoices, purchase orders, leave requests, etc.). Workflows support role-based steps, delegation, timeout escalation, and substitution rules.
+
+### Event-Driven Processing
+Key side effects are handled via queued Laravel listeners to keep the main transaction fast:
+- `InvoicePosted` → COPA auto-posting, customer balance update, compliance submission
+- `LeaveApproved` → balance deduction, notifications
+- `WorkOrderStarted` → inventory reservation, notifications
+- `LowStockDetected` → purchase requisition suggestion
+
+---
 
 ## Scheduled Tasks
 
 ```bash
-# Security cleanup
-php artisan security:cleanup-all              # Daily 03:00
-
-# Reports
-php artisan reports:run-scheduled --schedule=daily    # Daily 06:00
-php artisan reports:run-scheduled --schedule=weekly   # Monday 06:00
-php artisan reports:run-scheduled --schedule=monthly  # 1st of month 06:00
-
-# Exports cleanup
-php artisan exports:cleanup                   # Daily 02:00
-
-# Webhooks
-php artisan webhooks:process --retry          # Every 5 minutes
-php artisan webhooks:process --cleanup        # Daily 03:30
+php artisan security:cleanup-all               # Daily 03:00 — session/token cleanup
+php artisan schedule:run                       # Every minute — recurring invoices, accruals
+php artisan reports:run-scheduled              # Daily/weekly/monthly report generation
+php artisan invoices:mark-overdue              # Daily 01:00
+php artisan bills:mark-overdue                 # Daily 01:00
+php artisan segments:reevaluate                # Daily 02:00 — customer segmentation
+php artisan webhooks:process --retry           # Every 5 minutes
+php artisan zatca:setup                        # One-time — ZATCA connectivity + webhook registration
+php artisan export:cleanup                     # Daily — remove stale export files
+php artisan audit:cleanup                      # Weekly — archive old audit log rows
 ```
+
+---
 
 ## Testing
 
 ```bash
-# Run all tests
-php artisan test
+# Run full test suite
+php artisan test                              # 714 tests, 2,846 assertions
 
-# Run specific test suite
-php artisan test --testsuite=Feature
+# Filter by module
+php artisan test --filter=Accounting
+php artisan test --filter=HR
+php artisan test --filter=Inventory
+php artisan test --filter=Manufacturing
 
-# Run with coverage
+# Run journey tests (end-to-end flows)
+php artisan test tests/Feature/Journeys/
+
+# Run unit tests only
+php artisan test tests/Unit/
+
+# With coverage report
 php artisan test --coverage
 ```
 
+Tests use SQLite in-memory for speed. Each test class boots a fresh database via `RefreshDatabase`.
+
+### Test Structure
+
+| Layer | Location | Count | Purpose |
+|-------|----------|-------|---------|
+| Unit | `tests/Unit/` | ~11 files | Service logic, state machines, factories |
+| Feature (module) | `tests/Feature/` | ~33 files | CRUD, validation, business rules per module |
+| Feature (journey) | `tests/Feature/Journeys/` | 10 files | Multi-step end-to-end flows |
+| **Total** | | **714 tests** | **2,846 assertions** |
+
+See [`TESTS.md`](TESTS.md) for the complete test inventory and coverage checklist.
+
+---
+
 ## Subscription Tiers
 
-| Feature | Free | Standard | Professional | Enterprise |
-|---------|------|----------|--------------|------------|
+| Module | Free | Standard | Professional | Enterprise |
+|--------|------|----------|--------------|------------|
 | Users | 2 | 10 | 50 | Unlimited |
 | Branches | 1 | 3 | 10 | Unlimited |
-| Core | ✓ | ✓ | ✓ | ✓ |
-| Accounting | - | ✓ | ✓ | ✓ |
-| Inventory | - | ✓ | ✓ | ✓ |
-| Sales | - | ✓ | ✓ | ✓ |
-| Purchase | - | ✓ | ✓ | ✓ |
-| HR | - | - | ✓ | ✓ |
-| CRM | - | - | ✓ | ✓ |
-| POS | - | - | ✓ | ✓ |
-| Manufacturing | - | - | - | ✓ |
-| Projects | - | - | - | ✓ |
-| Assets | - | - | - | ✓ |
+| Core + Auth + RBAC | ✓ | ✓ | ✓ | ✓ |
+| Accounting (FI-GL/AR/AP) | — | ✓ | ✓ | ✓ |
+| Bank Reconciliation | — | ✓ | ✓ | ✓ |
+| Inventory (MM-IM) | — | ✓ | ✓ | ✓ |
+| Sales (SD) | — | ✓ | ✓ | ✓ |
+| Purchase (MM-PUR) | — | ✓ | ✓ | ✓ |
+| HR / Payroll (HCM) | — | — | ✓ | ✓ |
+| CRM | — | — | ✓ | ✓ |
+| Asset Accounting (FI-AA) | — | — | ✓ | ✓ |
+| Controlling (CO) | — | — | ✓ | ✓ |
+| Quality Management (QM) | — | — | — | ✓ |
+| Manufacturing (PP) | — | — | — | ✓ |
+| Plant Maintenance (PM) | — | — | — | ✓ |
+| Project System (PS) | — | — | — | ✓ |
+| Treasury / Loans | — | — | — | ✓ |
+| Consolidation (FI-LC) | — | — | — | ✓ |
+| Analytics & Fraud/AML | — | — | — | ✓ |
+| Real Estate (RE-FX) | — | — | — | ✓ |
+| Trade & Customs | — | — | ✓ | ✓ |
+| E-commerce Integration | — | — | ✓ | ✓ |
+| Transportation Management | — | — | — | ✓ |
+| Loyalty Management | — | — | ✓ | ✓ |
+| Omnichannel Messaging | — | — | ✓ | ✓ |
+| Task Boards | — | ✓ | ✓ | ✓ |
+| Document Vault | — | ✓ | ✓ | ✓ |
+| Expense Management | — | ✓ | ✓ | ✓ |
+| Budget Management | — | — | ✓ | ✓ |
+| Calendar & Automation | — | ✓ | ✓ | ✓ |
+| ZATCA / GCC Compliance | — | ✓ | ✓ | ✓ |
+| India GST / TDS | — | ✓ | ✓ | ✓ |
+
+---
 
 ## Security
 
-- All API endpoints require JWT authentication
-- Multi-tenant data isolation at query level
-- Input validation and sanitization
-- Rate limiting on API endpoints
-- Encrypted sensitive data storage
-- CORS configuration
-- CSRF protection (for web routes)
+- JWT authentication with token blacklisting on logout
+- Two-Factor Authentication (TOTP)
+- Login history and session management
+- Role-based access control on every endpoint
+- Module-level subscription gating
+- Rate limiting on auth and webhook endpoints
+- HMAC-SHA256 signature verification (ZATCA webhooks + outbound)
+- Encrypted storage for PII (employee NID, bank account numbers)
+- Sensitive data access logging with mandatory reason capture
+- Change-freeze periods block destructive operations during financial close
+- Full audit trail on all create/update/delete operations
+
+---
 
 ## License
 
-Proprietary - All rights reserved.
-
-## Support
-
-For support, please contact the development team.
+Proprietary — All rights reserved.

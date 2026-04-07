@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Models\Inventory;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class StockTransferLine extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'stock_transfer_id',
         'product_id',
@@ -48,7 +51,7 @@ class StockTransferLine extends Model
      */
     public function getTotalValue(): float
     {
-        return bcmul((string) $this->quantity_sent, (string) $this->unit_cost, 4);
+        return (float) bcmul((string) $this->quantity_sent, (string) $this->unit_cost, 4);
     }
 
     /**
@@ -56,7 +59,7 @@ class StockTransferLine extends Model
      */
     public function getDiscrepancy(): float
     {
-        return bcsub((string) $this->quantity_received, (string) $this->quantity_sent, 4);
+        return (float) bcsub((string) $this->quantity_received, (string) $this->quantity_sent, 4);
     }
 
     /**

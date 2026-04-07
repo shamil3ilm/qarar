@@ -115,7 +115,7 @@ class ProductService
 
         // Filter by category
         if (!empty($filters['category_id'])) {
-            $categoryIds = $this->getCategoryWithDescendants($filters['category_id']);
+            $categoryIds = $this->getCategoryWithDescendants((int) $filters['category_id']);
             $query->whereIn('category_id', $categoryIds);
         }
 
@@ -171,7 +171,8 @@ class ProductService
      */
     public function getStockSummary(Product $product): array
     {
-        $stockLevels = StockLevel::with('warehouse')
+        $stockLevels = StockLevel::where('organization_id', $product->organization_id)
+            ->with('warehouse')
             ->where('product_id', $product->id)
             ->get();
 
@@ -199,8 +200,10 @@ class ProductService
     {
         return DB::transaction(function () use ($product, $newSku, $newName) {
             $data = $product->replicate([
-                'id', 'uuid', 'sku', 'barcode', 'created_at', 'updated_at'
+                'id', 'uuid', 'sku', 'barcode', 'created_at', 'updated_at', 'deleted_at'
             ])->toArray();
+
+            unset($data['deleted_at']);
 
             $data['sku'] = $newSku;
             $data['name'] = $newName ?? $product->name . ' (Copy)';
@@ -217,6 +220,21 @@ class ProductService
                 $newProduct->variants()->create($variantData);
             }
 
+            // Copy tax category
+            if ($product->taxCategory) {
+                $newProduct->taxCategory()->associate($product->taxCategory)->save();
+            }
+
+            // Copy category
+            if ($product->category_id) {
+                $newProduct->update(['category_id' => $product->category_id]);
+            }
+
+            // Copy price list items
+            foreach ($product->priceListItems()->get() as $item) {
+                $newProduct->priceListItems()->create($item->only(['price_list_id', 'unit_price', 'min_quantity']));
+            }
+
             return $newProduct->load('variants');
         });
     }
@@ -231,11 +249,30 @@ class ProductService
         DB::transaction(function () use ($updates, &$results) {
             foreach ($updates as $update) {
                 try {
-                    Product::where('id', $update['product_id'])
-                        ->update([
-                            'purchase_price' => $update['purchase_price'] ?? DB::raw('purchase_price'),
-                            'selling_price' => $update['selling_price'] ?? DB::raw('selling_price'),
-                        ]);
+                    $product = Product::where('id', $update['product_id'])->first();
+
+                    if (!$product) {
+                        $results['failed'][] = [
+                            'product_id' => $update['product_id'],
+                            'error' => 'Product not found.',
+                        ];
+                        continue;
+                    }
+
+                    $fieldsToUpdate = [];
+
+                    if (isset($update['purchase_price'])) {
+                        $fieldsToUpdate['purchase_price'] = $update['purchase_price'];
+                    }
+
+                    if (isset($update['selling_price'])) {
+                        $fieldsToUpdate['selling_price'] = $update['selling_price'];
+                    }
+
+                    if (!empty($fieldsToUpdate)) {
+                        $product->update($fieldsToUpdate);
+                    }
+
                     $results['updated']++;
                 } catch (\Exception $e) {
                     $results['failed'][] = [
@@ -258,6 +295,8 @@ class ProductService
             ->when($warehouseId, fn($q) => $q->where('warehouse_id', $warehouseId))
             ->whereRaw('quantity <= COALESCE(reorder_level, 0)')
             ->whereNotNull('reorder_level')
+            ->orderByRaw('(reorder_level - quantity) DESC')
+            ->limit(500)
             ->get()
             ->map(fn($stockLevel) => [
                 'product_id' => $stockLevel->product_id,
@@ -279,24 +318,26 @@ class ProductService
     {
         $results = ['created' => 0, 'updated' => 0, 'failed' => []];
 
-        foreach ($products as $index => $data) {
-            try {
-                $product = Product::updateOrCreate(
-                    ['sku' => $data['sku']],
-                    $data
-                );
+        DB::transaction(function () use ($products, &$results) {
+            foreach ($products as $index => $data) {
+                try {
+                    $product = Product::updateOrCreate(
+                        ['sku' => $data['sku']],
+                        $data
+                    );
 
-                $product->wasRecentlyCreated
-                    ? $results['created']++
-                    : $results['updated']++;
-            } catch (\Exception $e) {
-                $results['failed'][] = [
-                    'row' => $index + 1,
-                    'sku' => $data['sku'] ?? 'N/A',
-                    'error' => $e->getMessage(),
-                ];
+                    $product->wasRecentlyCreated
+                        ? $results['created']++
+                        : $results['updated']++;
+                } catch (\Exception $e) {
+                    $results['failed'][] = [
+                        'row' => $index + 1,
+                        'sku' => $data['sku'] ?? 'N/A',
+                        'error' => $e->getMessage(),
+                    ];
+                }
             }
-        }
+        });
 
         return $results;
     }

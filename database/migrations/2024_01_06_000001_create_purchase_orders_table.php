@@ -96,6 +96,15 @@ return new class extends Migration
             $table->foreignId('tax_category_id')->nullable()->constrained('tax_categories')->nullOnDelete();
             $table->decimal('tax_rate', 8, 4)->default(0);
             $table->decimal('tax_amount', 18, 4)->default(0);
+            $table->string('tax_code', 10)->nullable();
+
+            // GST split (for India)
+            $table->decimal('cgst_rate', 8, 4)->default(0);
+            $table->decimal('cgst_amount', 18, 4)->default(0);
+            $table->decimal('sgst_rate', 8, 4)->default(0);
+            $table->decimal('sgst_amount', 18, 4)->default(0);
+            $table->decimal('igst_rate', 8, 4)->default(0);
+            $table->decimal('igst_amount', 18, 4)->default(0);
 
             $table->decimal('subtotal', 18, 4)->default(0);
             $table->decimal('total', 18, 4)->default(0);

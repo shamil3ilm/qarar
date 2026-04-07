@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Inventory;
 
+use App\Models\Inventory\StockMovement;
 use App\Models\Inventory\StockTransfer;
 use App\Models\Inventory\StockTransferLine;
 use App\Services\Core\NumberGeneratorService;
@@ -29,6 +30,10 @@ class StockTransferService
                 );
             }
 
+            // Validate warehouse existence
+            \App\Models\Inventory\Warehouse::findOrFail($data['from_warehouse_id']);
+            \App\Models\Inventory\Warehouse::findOrFail($data['to_warehouse_id']);
+
             // Generate transfer number if not provided
             if (empty($data['transfer_number'])) {
                 $data['transfer_number'] = $this->numberGenerator->generate('TRF');
@@ -48,7 +53,7 @@ class StockTransferService
                 $transfer->lines()->create($lineData);
             }
 
-            return $transfer->load('lines.product');
+            return $transfer->load(['lines.product', 'lines.variant']);
         });
     }
 
@@ -91,26 +96,26 @@ class StockTransferService
                 }
             }
 
-            return $transfer->fresh(['lines.product']);
+            return $transfer->fresh(['lines.product', 'lines.variant']);
         });
     }
 
     /**
      * Ship a transfer (move stock out of source warehouse).
      */
-    public function ship(StockTransfer $transfer): StockTransfer
+    public function ship(StockTransfer $transfer, int $userId): StockTransfer
     {
         if (!$transfer->canShip()) {
             throw new \InvalidArgumentException('Transfer cannot be shipped.');
         }
 
-        return DB::transaction(function () use ($transfer) {
+        return DB::transaction(function () use ($transfer, $userId) {
             // Validate stock availability for all lines
             foreach ($transfer->lines as $line) {
                 if (!$this->stockService->hasAvailableStock(
                     $line->product_id,
                     $transfer->from_warehouse_id,
-                    $line->quantity_sent,
+                    (float) $line->quantity_sent,
                     $line->variant_id
                 )) {
                     throw new \InvalidArgumentException(
@@ -124,10 +129,10 @@ class StockTransferService
                 $this->stockService->recordMovement(
                     productId: $line->product_id,
                     warehouseId: $transfer->from_warehouse_id,
-                    movementType: 'transfer_out',
+                    movementType: StockMovement::TYPE_TRANSFER_OUT,
                     direction: 'out',
-                    quantity: $line->quantity_sent,
-                    unitCost: $line->unit_cost,
+                    quantity: (float) $line->quantity_sent,
+                    unitCost: (float) $line->unit_cost,
                     variantId: $line->variant_id,
                     referenceType: 'stock_transfer',
                     referenceId: $transfer->id,
@@ -139,26 +144,38 @@ class StockTransferService
             $transfer->update([
                 'status' => StockTransfer::STATUS_IN_TRANSIT,
                 'shipped_at' => now(),
-                'shipped_by' => auth()->id(),
+                'shipped_by' => $userId,
             ]);
 
-            return $transfer->fresh();
+            return $transfer->fresh(['lines.product', 'lines.variant']);
         });
     }
 
     /**
      * Receive a transfer (add stock to destination warehouse).
      */
-    public function receive(StockTransfer $transfer, array $receivedQuantities = []): StockTransfer
+    public function receive(StockTransfer $transfer, array $receivedQuantities = [], int $userId = 0): StockTransfer
     {
         if (!$transfer->canReceive()) {
             throw new \InvalidArgumentException('Transfer cannot be received.');
         }
 
-        return DB::transaction(function () use ($transfer, $receivedQuantities) {
+        return DB::transaction(function () use ($transfer, $receivedQuantities, $userId) {
+            // Re-fetch with a pessimistic lock to prevent concurrent receive operations
+            $transfer = StockTransfer::where('id', $transfer->id)->lockForUpdate()->firstOrFail();
+
+            // Idempotency guard: prevent double-processing a completed transfer
+            if ($transfer->status === StockTransfer::STATUS_RECEIVED) {
+                throw new \LogicException('Stock transfer already completed.');
+            }
+
+            if (!$transfer->canReceive()) {
+                throw new \InvalidArgumentException('Transfer cannot be received.');
+            }
+
             foreach ($transfer->lines as $line) {
                 // Use provided quantity or default to sent quantity
-                $receivedQty = $receivedQuantities[$line->id] ?? $line->quantity_sent;
+                $receivedQty = (float) ($receivedQuantities[$line->id] ?? $line->quantity_sent);
 
                 // Update line with received quantity
                 $line->update(['quantity_received' => $receivedQty]);
@@ -168,10 +185,10 @@ class StockTransferService
                     $this->stockService->recordMovement(
                         productId: $line->product_id,
                         warehouseId: $transfer->to_warehouse_id,
-                        movementType: 'transfer_in',
+                        movementType: StockMovement::TYPE_TRANSFER_IN,
                         direction: 'in',
                         quantity: $receivedQty,
-                        unitCost: $line->unit_cost,
+                        unitCost: (float) $line->unit_cost,
                         variantId: $line->variant_id,
                         referenceType: 'stock_transfer',
                         referenceId: $transfer->id,
@@ -184,10 +201,10 @@ class StockTransferService
             $transfer->update([
                 'status' => StockTransfer::STATUS_RECEIVED,
                 'received_at' => now(),
-                'received_by' => auth()->id(),
+                'received_by' => $userId,
             ]);
 
-            return $transfer->fresh(['lines.product']);
+            return $transfer->fresh(['lines.product', 'lines.variant']);
         });
     }
 
@@ -200,6 +217,10 @@ class StockTransferService
             throw new \InvalidArgumentException('Received transfers cannot be cancelled.');
         }
 
+        if ($transfer->status === StockTransfer::STATUS_CANCELLED) {
+            throw new \InvalidArgumentException('Transfer is already cancelled.');
+        }
+
         return DB::transaction(function () use ($transfer) {
             // If in transit, return stock to source warehouse
             if ($transfer->status === StockTransfer::STATUS_IN_TRANSIT) {
@@ -207,10 +228,10 @@ class StockTransferService
                     $this->stockService->recordMovement(
                         productId: $line->product_id,
                         warehouseId: $transfer->from_warehouse_id,
-                        movementType: 'transfer_in',
+                        movementType: StockMovement::TYPE_TRANSFER_IN,
                         direction: 'in',
-                        quantity: $line->quantity_sent,
-                        unitCost: $line->unit_cost,
+                        quantity: (float) $line->quantity_sent,
+                        unitCost: (float) $line->unit_cost,
                         variantId: $line->variant_id,
                         referenceType: 'stock_transfer',
                         referenceId: $transfer->id,
@@ -222,7 +243,7 @@ class StockTransferService
 
             $transfer->update(['status' => StockTransfer::STATUS_CANCELLED]);
 
-            return $transfer->fresh();
+            return $transfer->fresh(['lines.product', 'lines.variant']);
         });
     }
 

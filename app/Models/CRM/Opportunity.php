@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\Models\CRM;
 
-use App\Models\Branch;
+use App\Models\Core\Branch;
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasUuid;
 use App\Models\Sales\Contact;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
@@ -16,7 +17,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Opportunity extends Model
 {
-    use BelongsToOrganization, HasUuid, SoftDeletes;
+    use BelongsToOrganization, HasFactory, HasUuid, SoftDeletes;
 
     public const STATUS_OPEN = 'open';
     public const STATUS_WON = 'won';
@@ -142,7 +143,7 @@ class Opportunity extends Model
     public function getDaysOpen(): int
     {
         $endDate = $this->actual_close_date ?? now();
-        return $this->created_at->diffInDays($endDate);
+        return (int) $this->created_at->diffInDays($endDate);
     }
 
     public function getDaysUntilClose(): ?int
@@ -151,7 +152,7 @@ class Opportunity extends Model
             return null;
         }
 
-        return now()->diffInDays($this->expected_close_date, false);
+        return (int) now()->diffInDays($this->expected_close_date, false);
     }
 
     public function isOverdue(): bool

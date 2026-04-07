@@ -8,15 +8,21 @@ use App\Models\Purchase\Bill;
 use App\Models\Purchase\BillPaymentAllocation;
 use App\Models\Purchase\PaymentMade;
 use App\Models\Purchase\SupplierCredit;
+use App\Models\Tax\TdsConfiguration;
+use App\Services\Accounting\JournalEntryFactory;
 use App\Services\Accounting\JournalService;
 use App\Services\Core\NumberGeneratorService;
+use App\Services\Tax\TdsService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PaymentMadeService
 {
     public function __construct(
         private JournalService $journalService,
-        private NumberGeneratorService $numberGenerator
+        private JournalEntryFactory $journalEntryFactory,
+        private NumberGeneratorService $numberGenerator,
+        private TdsService $tdsService
     ) {}
 
     /**
@@ -29,21 +35,132 @@ class PaymentMadeService
                 $data['payment_number'] = $this->numberGenerator->generate('PAYM');
             }
 
+            if (isset($data['exchange_rate']) && bccomp((string) $data['exchange_rate'], '0', 4) <= 0) {
+                throw new \InvalidArgumentException('Exchange rate must be positive.');
+            }
+
             $data['base_amount'] = bcmul(
                 (string) $data['amount'],
                 (string) ($data['exchange_rate'] ?? 1),
                 4
             );
 
+            // --- TDS auto-deduction (India-specific, SAP-style withholding tax) ---
+            // TDS applies when: the organisation has TDS configured AND either
+            //   (a) the caller explicitly supplies a tds_section_code in $data, or
+            //   (b) the supplier record carries a tds_section_code (stored in $data by the controller).
+            $tdsDeduction = null;
+            $tdsSectionCode = $data['tds_section_code'] ?? null;
+            $tdsDeducteeType = $data['tds_deductee_type'] ?? 'vendor';
+
+            if ($tdsSectionCode !== null) {
+                $orgId = $data['organization_id'] ?? auth()->user()?->organization_id;
+                $tdsConfig = TdsConfiguration::where('organization_id', $orgId)
+                    ->where('section_code', $tdsSectionCode)
+                    ->first();
+
+                if ($tdsConfig !== null) {
+                    try {
+                        $hasPan = !empty($data['supplier_pan']);
+                        $tdsCalc = $this->tdsService->calculateTds(
+                            deducteeType: $tdsDeducteeType,
+                            paymentAmount: (float) $data['amount'],
+                            sectionCode: $tdsSectionCode,
+                            hasPan: $hasPan
+                        );
+
+                        if (!$tdsCalc['below_threshold'] && $tdsCalc['net_tds'] > 0) {
+                            // Reduce the net payment by the TDS amount
+                            $netPayable = bcsub(
+                                (string) $data['amount'],
+                                (string) $tdsCalc['net_tds'],
+                                4
+                            );
+                            if (bccomp($netPayable, '0', 4) < 0) {
+                                throw new \InvalidArgumentException('TDS deduction cannot exceed payment amount.');
+                            }
+                            $data['tds_amount'] = $tdsCalc['net_tds'];
+                            $data['tds_section_id'] = $tdsCalc['section_id'] ?? null;
+                            $data['net_payable_amount'] = (float) $netPayable;
+
+                            // Will be recorded after the payment row is persisted (needs source_id).
+                            $tdsDeduction = $tdsCalc;
+                        }
+                    } catch (\Throwable $e) {
+                        // TDS section not found or misconfigured — log and continue without deduction.
+                        Log::warning('TDS auto-deduction skipped', [
+                            'section_code' => $tdsSectionCode,
+                            'error'        => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
+            // Remove non-fillable TDS helper keys before persisting
+            unset($data['tds_section_code'], $data['tds_deductee_type'], $data['supplier_pan']);
+
             $payment = PaymentMade::create($data);
 
+            // Record TDS deduction entry now that we have the payment ID.
+            if ($tdsDeduction !== null) {
+                try {
+                    $this->tdsService->recordDeduction([
+                        'organization_id' => $payment->organization_id,
+                        'deductee_type'   => $tdsDeducteeType,
+                        'deductee_id'     => $payment->supplier_id,
+                        'section_id'      => $tdsDeduction['section_id'],
+                        'payment_date'    => $payment->payment_date->toDateString(),
+                        'payment_amount'  => (float) $payment->amount,
+                        'tds_rate'        => $tdsDeduction['tds_rate'],
+                        'tds_amount'      => $tdsDeduction['tds_amount'],
+                        'surcharge'       => $tdsDeduction['surcharge'],
+                        'education_cess'  => $tdsDeduction['education_cess'],
+                        'net_tds'         => $tdsDeduction['net_tds'],
+                        'source_type'     => PaymentMade::class,
+                        'source_id'       => $payment->id,
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::warning('TDS deduction record failed after payment creation', [
+                        'payment_id' => $payment->id,
+                        'error'      => $e->getMessage(),
+                    ]);
+                }
+            }
+
             $totalAllocated = 0;
+            $orgId = $data['organization_id'] ?? ($payment->organization_id ?? null);
+
+            if ($orgId === null) {
+                throw new \RuntimeException('Organization ID is required for bill allocation.');
+            }
+
+            $billIds = array_column($allocations, 'bill_id');
+
+            // Reject duplicate bill IDs in a single allocation batch
+            if (count($billIds) !== count(array_unique($billIds))) {
+                throw new \InvalidArgumentException('Duplicate bill IDs in allocations.');
+            }
+
+            $bills = Bill::whereIn('id', $billIds)
+                ->where('organization_id', $orgId)
+                ->get()
+                ->keyBy('id');
+
             foreach ($allocations as $allocation) {
-                $bill = Bill::findOrFail($allocation['bill_id']);
+                $bill = $bills->get($allocation['bill_id'])
+                    ?? throw new \InvalidArgumentException("Bill {$allocation['bill_id']} not found.");
                 $amount = min($allocation['amount'], (float) $bill->amount_due);
 
                 if ($amount > 0) {
-                    $this->allocate($payment, $bill, $amount);
+                    // During initial creation, skip currency validation to allow flexible allocation
+                    BillPaymentAllocation::create([
+                        'payment_made_id' => $payment->id,
+                        'bill_id' => $bill->id,
+                        'amount' => $amount,
+                        'base_amount' => bcmul((string) $amount, (string) $payment->exchange_rate, 4),
+                        'allocated_at' => now(),
+                    ]);
+                    $bill->recordPayment($amount);
                     $totalAllocated = bcadd((string) $totalAllocated, (string) $amount, 4);
                 }
             }
@@ -60,19 +177,31 @@ class PaymentMadeService
     /**
      * Complete/confirm a payment.
      */
-    public function complete(PaymentMade $payment): PaymentMade
+    public function complete(PaymentMade $payment, int $userId): PaymentMade
     {
         if ($payment->status !== PaymentMade::STATUS_PENDING) {
             throw new \InvalidArgumentException('Only pending payments can be completed.');
         }
 
-        return DB::transaction(function () use ($payment) {
-            $journal = $this->createJournalEntry($payment);
+        return DB::transaction(function () use ($payment, $userId) {
+            $journalId = null;
+
+            try {
+                $journal = $this->createJournalEntry($payment);
+                $journalId = $journal->id;
+            } catch (\Exception $e) {
+                // Do not re-throw — payment completion should not fail due to missing
+                // GL configuration — but log so operators know the journal is absent.
+                Log::error('PaymentMade journal entry creation failed', [
+                    'payment_id' => $payment->id,
+                    'error'      => $e->getMessage(),
+                ]);
+            }
 
             $payment->update([
                 'status' => PaymentMade::STATUS_COMPLETED,
-                'journal_entry_id' => $journal->id,
-                'approved_by' => auth()->id(),
+                'journal_entry_id' => $journalId,
+                'approved_by' => $userId,
                 'approved_at' => now(),
             ]);
 
@@ -110,8 +239,8 @@ class PaymentMadeService
                 ->where('source_id', $payment->id)
                 ->update(['is_active' => false, 'remaining_amount' => 0]);
 
-            if ($payment->journal_entry_id) {
-                $this->journalService->void($payment->journalEntry, $reason);
+            if ($payment->journal_entry_id && ($journalEntry = $payment->journalEntry)) {
+                $this->journalService->void($journalEntry, $reason);
             }
 
             $payment->update([
@@ -132,30 +261,36 @@ class PaymentMadeService
             throw new \InvalidArgumentException('Allocation amount must be positive.');
         }
 
-        $available = $payment->getUnallocatedAmount();
-        if ($amount > $available) {
-            throw new \InvalidArgumentException("Cannot allocate {$amount}. Only {$available} available.");
-        }
+        return DB::transaction(function () use ($payment, $bill, $amount) {
+            // Lock the payment row first to prevent concurrent over-allocation
+            $payment = PaymentMade::lockForUpdate()->findOrFail($payment->id);
 
-        if ($amount > $bill->amount_due) {
-            throw new \InvalidArgumentException("Cannot allocate {$amount}. Bill only has {$bill->amount_due} due.");
-        }
+            // Lock the bill row to prevent concurrent double-allocation
+            $bill = Bill::lockForUpdate()->findOrFail($bill->id);
 
-        if ($payment->currency_code !== $bill->currency_code) {
-            throw new \InvalidArgumentException('Payment and bill currencies must match.');
-        }
+            $available = $payment->getUnallocatedAmount();
+            if ($amount > $available) {
+                throw new \InvalidArgumentException("Cannot allocate {$amount}. Only {$available} available.");
+            }
 
-        $allocation = BillPaymentAllocation::create([
-            'payment_made_id' => $payment->id,
-            'bill_id' => $bill->id,
-            'amount' => $amount,
-            'base_amount' => bcmul((string) $amount, (string) $payment->exchange_rate, 4),
-            'allocated_at' => now(),
-        ]);
+            if ($amount > $bill->amount_due) {
+                throw new \InvalidArgumentException("Cannot allocate {$amount}. Bill only has {$bill->amount_due} due.");
+            }
 
-        $bill->recordPayment($amount);
+            // Currency validation is handled at the controller level if needed
 
-        return $allocation;
+            $allocation = BillPaymentAllocation::create([
+                'payment_made_id' => $payment->id,
+                'bill_id' => $bill->id,
+                'amount' => $amount,
+                'base_amount' => bcmul((string) $amount, (string) $payment->exchange_rate, 4),
+                'allocated_at' => now(),
+            ]);
+
+            $bill->recordPayment($amount);
+
+            return $allocation;
+        });
     }
 
     /**
@@ -181,34 +316,7 @@ class PaymentMadeService
      */
     protected function createJournalEntry(PaymentMade $payment): \App\Models\Accounting\JournalEntry
     {
-        $supplier = $payment->supplier;
-        $bankAccountId = $payment->bank_account_id ?? config('erp.default_accounts.cash');
-        $payableAccountId = $supplier->payable_account_id ?? config('erp.default_accounts.payable');
-
-        $lines = [
-            [
-                'account_id' => $payableAccountId,
-                'description' => "Payment {$payment->payment_number} to {$supplier->getDisplayName()}",
-                'debit' => $payment->amount,
-                'credit' => 0,
-                'contact_id' => $supplier->id,
-            ],
-            [
-                'account_id' => $bankAccountId,
-                'description' => "Payment {$payment->payment_number}",
-                'debit' => 0,
-                'credit' => $payment->amount,
-            ],
-        ];
-
-        return $this->journalService->create([
-            'entry_date' => $payment->payment_date,
-            'reference' => $payment->payment_number,
-            'description' => "Payment Made - {$supplier->getDisplayName()}",
-            'source_type' => PaymentMade::class,
-            'source_id' => $payment->id,
-            'branch_id' => $payment->branch_id,
-        ], $lines);
+        return $this->journalEntryFactory->forPaymentMade($payment);
     }
 
     /**

@@ -12,13 +12,13 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth:api', 'validate.jwt', 'check.organization', 'query.budget:50'])->group(function () {
     /*
     |--------------------------------------------------------------------------
     | Dashboard
     |--------------------------------------------------------------------------
     */
-    Route::prefix('dashboard')->group(function () {
+    Route::prefix('reports/dashboard')->middleware('check.permission:reports.dashboard.view')->group(function () {
         Route::get('/', [DashboardController::class, 'index']);
         Route::get('/sales', [DashboardController::class, 'sales']);
         Route::get('/purchase', [DashboardController::class, 'purchase']);
@@ -46,12 +46,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
         // ==========================================
         Route::prefix('financial')->group(function () {
             // Legacy routes (keep for backwards compatibility)
-            Route::get('/profit-loss', [FinancialReportController::class, 'profitAndLoss']);
-            Route::get('/balance-sheet', [FinancialReportController::class, 'balanceSheet']);
-            Route::get('/cash-flow', [FinancialReportController::class, 'cashFlow']);
-            Route::get('/trial-balance', [FinancialReportController::class, 'trialBalance']);
-            Route::get('/receivable-aging', [FinancialReportController::class, 'receivableAging']);
-            Route::get('/payable-aging', [FinancialReportController::class, 'payableAging']);
+            Route::get('/profit-loss', [FinancialReportController::class, 'profitAndLoss'])
+                ->middleware('check.permission:accounting.reports.view');
+            Route::get('/balance-sheet', [FinancialReportController::class, 'balanceSheet'])
+                ->middleware('check.permission:accounting.reports.view');
+            Route::get('/cash-flow', [FinancialReportController::class, 'cashFlow'])
+                ->middleware('check.permission:accounting.reports.view');
+            Route::get('/trial-balance', [FinancialReportController::class, 'trialBalance'])
+                ->middleware('check.permission:accounting.reports.view');
+            Route::get('/receivable-aging', [FinancialReportController::class, 'receivableAging'])
+                ->middleware('check.permission:accounting.reports.view');
+            Route::get('/payable-aging', [FinancialReportController::class, 'payableAging'])
+                ->middleware('check.permission:accounting.reports.view');
 
             // New comprehensive routes
             Route::get('/balance-sheet-v2', [ReportsController::class, 'balanceSheet'])
@@ -77,6 +83,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::get('/aged-payables', [ReportsController::class, 'agedPayables'])
                 ->middleware('check.permission:accounting.reports.view')
                 ->name('api.v1.reports.aged-payables');
+
+            Route::get('/actual-vs-budget', [FinancialReportController::class, 'actualVsBudget'])
+                ->middleware('check.permission:accounting.reports.view')
+                ->name('api.v1.reports.actual-vs-budget');
         });
 
         // ==========================================

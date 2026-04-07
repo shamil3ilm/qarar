@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models\Inventory;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -11,19 +12,19 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ProductVariant extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, HasFactory;
 
+    // The DB column is `attributes` (JSON), matching the migration.
+    // `cost_price`, `weight`, and `dimensions` do not exist in the variants table;
+    // weight is on the parent product, cost_price and dimensions are not tracked per-variant.
     protected $fillable = [
         'product_id',
         'sku',
         'name',
-        'attribute_values',
+        'attributes',
         'purchase_price',
         'selling_price',
-        'cost_price',
         'barcode',
-        'weight',
-        'dimensions',
         'image_url',
         'is_active',
     ];
@@ -31,13 +32,10 @@ class ProductVariant extends Model
     protected function casts(): array
     {
         return [
-            'attribute_values' => 'array',
-            'dimensions' => 'array',
+            'attributes'    => 'array',
             'purchase_price' => 'decimal:4',
-            'selling_price' => 'decimal:4',
-            'cost_price' => 'decimal:4',
-            'weight' => 'decimal:4',
-            'is_active' => 'boolean',
+            'selling_price'  => 'decimal:4',
+            'is_active'      => 'boolean',
         ];
     }
 
@@ -95,15 +93,15 @@ class ProductVariant extends Model
      */
     public function getFullName(): string
     {
-        if (empty($this->attribute_values)) {
+        if (empty($this->attributes)) {
             return $this->name ?? $this->product->name;
         }
 
-        $attributes = collect($this->attribute_values)
-            ->map(fn($value, $key) => "{$key}: {$value}")
+        $attrs = collect($this->attributes)
+            ->map(fn ($value, $key) => "{$key}: {$value}")
             ->implode(', ');
 
-        return "{$this->product->name} ({$attributes})";
+        return "{$this->product->name} ({$attrs})";
     }
 
     public function scopeActive($query)
@@ -113,6 +111,6 @@ class ProductVariant extends Model
 
     public function scopeWithAttribute($query, string $attribute, $value)
     {
-        return $query->whereJsonContains("attribute_values->{$attribute}", $value);
+        return $query->whereJsonContains("attributes->{$attribute}", $value);
     }
 }

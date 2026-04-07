@@ -10,18 +10,19 @@ use App\Models\Manufacturing\BomTemplate;
 use App\Services\Manufacturing\BomService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class BomController extends Controller
 {
     public function __construct(
         private BomService $bomService
-    ) {}
+    ) {
+    }
 
     /**
      * List BOM templates with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = BomTemplate::with(['product', 'outputUnit', 'defaultWarehouse'])
             ->withCount(['lines', 'operations', 'workOrders'])
@@ -34,13 +35,14 @@ class BomController extends Controller
                         ->orWhere('name', 'like', "%{$search}%");
                 });
             })
-            ->orderBy($request->sort_by ?? 'created_at', $request->sort_order ?? 'desc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['name', 'created_at', 'updated_at', 'status'], 'created_at'),
+                $this->safeSortOrder($request->sort_order, 'desc')
+            );
 
-        $boms = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        $boms = $query->paginate($request->integer('per_page', 15));
 
-        return BomTemplateResource::collection($boms);
+        return $this->paginated($boms, BomTemplateResource::class);
     }
 
     /**
@@ -52,27 +54,27 @@ class BomController extends Controller
             'bom_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:200',
             'description' => 'nullable|string',
-            'product_id' => 'required|exists:products,id',
-            'variant_id' => 'nullable|exists:product_variants,id',
+            'product_id' => ['required', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'variant_id' => ['nullable', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'output_quantity' => 'required|numeric|min:0.0001',
             'output_unit_id' => 'nullable|exists:units_of_measure,id',
-            'default_warehouse_id' => 'nullable|exists:warehouses,id',
-            'estimated_hours' => 'nullable|integer|min:0',
+            'default_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'estimated_hours' => 'nullable|numeric|min:0',
             'estimated_labor_cost' => 'nullable|numeric|min:0',
             'overhead_cost' => 'nullable|numeric|min:0',
             'effective_from' => 'nullable|date',
             'effective_to' => 'nullable|date|after_or_equal:effective_from',
             'notes' => 'nullable|string',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'required|exists:products,id',
-            'lines.*.variant_id' => 'nullable|exists:product_variants,id',
+            'lines.*.product_id' => ['required', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.description' => 'nullable|string|max:500',
             'lines.*.quantity' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:units_of_measure,id',
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.wastage_percentage' => 'nullable|numeric|min:0|max:100',
             'lines.*.is_critical' => 'nullable|boolean',
-            'lines.*.warehouse_id' => 'nullable|exists:warehouses,id',
+            'lines.*.warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'operations' => 'nullable|array',
             'operations.*.name' => 'required|string|max:100',
             'operations.*.description' => 'nullable|string',
@@ -84,26 +86,29 @@ class BomController extends Controller
             'operations.*.is_subcontracted' => 'nullable|boolean',
         ]);
 
-        $bom = $this->bomService->create(
-            collect($validated)->except(['lines', 'operations'])->toArray(),
-            $validated['lines'],
-            $validated['operations'] ?? []
-        );
+        try {
+            $bom = $this->bomService->create(
+                collect($validated)->except(['lines', 'operations'])->toArray(),
+                $validated['lines'],
+                $validated['operations'] ?? [],
+                auth()->id()
+            );
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'message' => 'BOM template created successfully.',
-            'data' => new BomTemplateResource($bom),
-        ], 201);
+        return $this->created(new BomTemplateResource($bom), 'BOM template created successfully.');
     }
 
     /**
      * Show a specific BOM template.
      */
-    public function show(BomTemplate $bom): BomTemplateResource
+    public function show(BomTemplate $bom): JsonResponse
     {
-        return new BomTemplateResource(
+        return $this->success(new BomTemplateResource(
             $bom->load(['product', 'variant', 'outputUnit', 'defaultWarehouse', 'lines.product', 'lines.unit', 'operations', 'createdBy'])
-        );
+        ));
     }
 
     /**
@@ -116,23 +121,23 @@ class BomController extends Controller
             'description' => 'nullable|string',
             'output_quantity' => 'sometimes|numeric|min:0.0001',
             'output_unit_id' => 'nullable|exists:units_of_measure,id',
-            'default_warehouse_id' => 'nullable|exists:warehouses,id',
-            'estimated_hours' => 'nullable|integer|min:0',
+            'default_warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'estimated_hours' => 'nullable|numeric|min:0',
             'estimated_labor_cost' => 'nullable|numeric|min:0',
             'overhead_cost' => 'nullable|numeric|min:0',
             'effective_from' => 'nullable|date',
             'effective_to' => 'nullable|date|after_or_equal:effective_from',
             'notes' => 'nullable|string',
             'lines' => 'sometimes|array|min:1',
-            'lines.*.product_id' => 'required|exists:products,id',
-            'lines.*.variant_id' => 'nullable|exists:product_variants,id',
+            'lines.*.product_id' => ['required', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.description' => 'nullable|string|max:500',
             'lines.*.quantity' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:units_of_measure,id',
             'lines.*.unit_cost' => 'nullable|numeric|min:0',
             'lines.*.wastage_percentage' => 'nullable|numeric|min:0|max:100',
             'lines.*.is_critical' => 'nullable|boolean',
-            'lines.*.warehouse_id' => 'nullable|exists:warehouses,id',
+            'lines.*.warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'operations' => 'sometimes|array',
             'operations.*.name' => 'required|string|max:100',
             'operations.*.description' => 'nullable|string',
@@ -144,17 +149,15 @@ class BomController extends Controller
             'operations.*.is_subcontracted' => 'nullable|boolean',
         ]);
 
-        $bom = $this->bomService->update(
-            $bom,
-            collect($validated)->except(['lines', 'operations'])->toArray(),
-            $validated['lines'] ?? null,
-            $validated['operations'] ?? null
+        return $this->tryAction(
+            fn() => new BomTemplateResource($this->bomService->update(
+                $bom,
+                collect($validated)->except(['lines', 'operations'])->toArray(),
+                $validated['lines'] ?? null,
+                $validated['operations'] ?? null
+            )),
+            'BOM template updated successfully.'
         );
-
-        return response()->json([
-            'message' => 'BOM template updated successfully.',
-            'data' => new BomTemplateResource($bom),
-        ]);
     }
 
     /**
@@ -163,51 +166,35 @@ class BomController extends Controller
     public function destroy(BomTemplate $bom): JsonResponse
     {
         if (!$bom->isDraft()) {
-            return response()->json([
-                'message' => 'Only draft BOM templates can be deleted.',
-            ], 422);
+            return $this->error('Only draft BOM templates can be deleted.', 'VALIDATION_ERROR', 422);
         }
 
         // Check if used in work orders
         if ($bom->workOrders()->exists()) {
-            return response()->json([
-                'message' => 'BOM template cannot be deleted. It has associated work orders.',
-            ], 422);
+            return $this->error('BOM template cannot be deleted. It has associated work orders.', 'VALIDATION_ERROR', 422);
         }
 
         $bom->lines()->delete();
         $bom->operations()->delete();
         $bom->delete();
 
-        return response()->json([
-            'message' => 'BOM template deleted successfully.',
-        ]);
+        return $this->success(null, 'BOM template deleted successfully.');
     }
 
     /**
-     * Activate a BOM template.
+     * Activate or deactivate a BOM template.
+     * PATCH /bom-templates/{bom}/active  {"active": true|false}
      */
-    public function activate(BomTemplate $bom): JsonResponse
+    public function setActive(Request $request, BomTemplate $bom): JsonResponse
     {
-        $bom = $this->bomService->activate($bom);
+        $activate = $request->boolean('active');
 
-        return response()->json([
-            'message' => 'BOM template activated successfully.',
-            'data' => new BomTemplateResource($bom),
-        ]);
-    }
-
-    /**
-     * Deactivate a BOM template.
-     */
-    public function deactivate(BomTemplate $bom): JsonResponse
-    {
-        $bom = $this->bomService->deactivate($bom);
-
-        return response()->json([
-            'message' => 'BOM template deactivated successfully.',
-            'data' => new BomTemplateResource($bom),
-        ]);
+        return $this->tryAction(
+            fn() => new BomTemplateResource(
+                $activate ? $this->bomService->activate($bom) : $this->bomService->deactivate($bom)
+            ),
+            $activate ? 'BOM template activated successfully.' : 'BOM template deactivated successfully.',
+        );
     }
 
     /**
@@ -217,15 +204,17 @@ class BomController extends Controller
     {
         $validated = $request->validate([
             'name' => 'nullable|string|max:200',
-            'product_id' => 'nullable|exists:products,id',
+            'product_id' => ['nullable', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
         ]);
 
-        $newBom = $this->bomService->duplicate($bom, $validated);
+        try {
+            $newBom = $this->bomService->duplicate($bom, $validated, auth()->id());
+        } catch (\Exception $e) {
+            report($e);
+            return $this->error('An unexpected error occurred. Please try again.', 'SERVER_ERROR', 500);
+        }
 
-        return response()->json([
-            'message' => 'BOM template duplicated successfully.',
-            'data' => new BomTemplateResource($newBom),
-        ], 201);
+        return $this->created(new BomTemplateResource($newBom), 'BOM template duplicated successfully.');
     }
 
     /**
@@ -240,9 +229,7 @@ class BomController extends Controller
         $quantity = (float) ($validated['quantity'] ?? $bom->output_quantity);
         $breakdown = $this->bomService->getCostBreakdown($bom, $quantity);
 
-        return response()->json([
-            'data' => $breakdown,
-        ]);
+        return $this->success($breakdown);
     }
 
     /**
@@ -252,7 +239,7 @@ class BomController extends Controller
     {
         $validated = $request->validate([
             'quantity' => 'required|numeric|min:0.0001',
-            'warehouse_id' => 'nullable|exists:warehouses,id',
+            'warehouse_id' => ['nullable', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
         ]);
 
         $availability = $this->bomService->checkAvailability(
@@ -261,9 +248,7 @@ class BomController extends Controller
             $validated['warehouse_id'] ?? null
         );
 
-        return response()->json([
-            'data' => $availability,
-        ]);
+        return $this->success($availability);
     }
 
     /**
@@ -272,7 +257,7 @@ class BomController extends Controller
     public function forProduct(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'product_id' => 'required|exists:products,id',
+            'product_id' => ['required', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
             'active_only' => 'nullable|boolean',
         ]);
 
@@ -281,8 +266,6 @@ class BomController extends Controller
             $validated['active_only'] ?? true
         );
 
-        return response()->json([
-            'data' => BomTemplateResource::collection($boms),
-        ]);
+        return $this->success(BomTemplateResource::collection($boms));
     }
 }

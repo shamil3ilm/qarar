@@ -32,41 +32,30 @@ return new class extends Migration
         // Leave types (annual, sick, casual, maternity, etc.)
         Schema::create('leave_types', function (Blueprint $table) {
             $table->id();
-            $table->uuid('uuid')->unique();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('leave_policy_id')->constrained('leave_policies')->cascadeOnDelete();
             $table->string('name');
             $table->string('code', 20);
             $table->text('description')->nullable();
-            $table->string('color', 7)->default('#3B82F6'); // For UI display
-            $table->string('icon')->nullable();
-
-            // Leave behavior
+            $table->decimal('annual_quota', 8, 2)->default(0);
             $table->boolean('is_paid')->default(true);
-            $table->boolean('is_encashable')->default(false); // Can be converted to cash
-            $table->boolean('is_carryforward_allowed')->default(true);
-            $table->unsignedSmallInteger('max_carryforward_days')->nullable();
-            $table->boolean('requires_attachment')->default(false); // Medical certificate, etc.
-            $table->boolean('requires_reason')->default(true);
-
-            // Restrictions
-            $table->string('gender_restriction', 10)->nullable(); // male, female, null (both)
-            $table->string('employment_type_restriction', 50)->nullable(); // full_time, part_time, contract
-            $table->unsignedSmallInteger('min_service_months')->default(0); // Minimum months to be eligible
-            $table->unsignedSmallInteger('max_consecutive_days')->nullable();
-            $table->unsignedSmallInteger('min_days_per_request')->nullable();
-            $table->unsignedSmallInteger('max_days_per_request')->nullable();
-            $table->json('allowed_days_of_week')->nullable(); // [1,2,3,4,5] for weekdays only
-            $table->json('blackout_dates')->nullable(); // Dates when this leave cannot be taken
-
-            // Accrual settings
-            $table->string('accrual_type', 20)->default('yearly'); // yearly, monthly, weekly, none
-            $table->unsignedTinyInteger('accrual_day')->nullable(); // Day of month/week for accrual
-
-            $table->boolean('count_holidays')->default(false); // Include holidays in leave count
-            $table->boolean('count_weekends')->default(false); // Include weekends in leave count
-
-            $table->unsignedSmallInteger('display_order')->default(0);
+            $table->boolean('is_encashable')->default(false);
+            $table->decimal('max_encashable_days', 8, 2)->nullable();
+            $table->boolean('carry_forward')->default(false);
+            $table->decimal('max_carry_forward_days', 8, 2)->nullable();
+            $table->unsignedSmallInteger('min_days_notice')->default(0);
+            $table->decimal('max_consecutive_days', 8, 2)->nullable();
+            $table->boolean('requires_attachment')->default(false);
+            $table->unsignedSmallInteger('attachment_required_after_days')->default(0);
+            $table->boolean('half_day_allowed')->default(true);
+            $table->boolean('requires_approval')->default(true);
+            $table->string('applicable_gender', 20)->default('all');
+            $table->string('applicable_marital_status', 20)->default('all');
+            $table->unsignedSmallInteger('applicable_after_months')->default(0);
+            $table->string('accrual_type', 20)->default('annual'); // annual, monthly, quarterly
+            $table->boolean('prorate_on_joining')->default(true);
+            $table->boolean('prorate_on_exit')->default(true);
+            $table->string('color', 7)->nullable();
+            $table->unsignedSmallInteger('sort_order')->default(0);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 
@@ -115,22 +104,15 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
             $table->foreignId('leave_type_id')->constrained('leave_types')->cascadeOnDelete();
-            $table->foreignId('leave_tier_id')->nullable()->constrained('leave_tiers')->nullOnDelete();
             $table->unsignedSmallInteger('year');
-
-            // Balances
-            $table->decimal('opening_balance', 6, 2)->default(0);
-            $table->decimal('entitled_days', 6, 2)->default(0); // From tier
-            $table->decimal('accrued_days', 6, 2)->default(0); // Accumulated through accrual
-            $table->decimal('adjustment_days', 6, 2)->default(0); // Manual adjustments
-            $table->decimal('used_days', 6, 2)->default(0);
-            $table->decimal('pending_days', 6, 2)->default(0); // Approved but not taken
-            $table->decimal('carried_forward', 6, 2)->default(0); // From previous year
-            $table->decimal('encashed_days', 6, 2)->default(0);
-            $table->decimal('lapsed_days', 6, 2)->default(0); // Expired carryforward
-            $table->decimal('available_balance', 6, 2)->default(0); // Computed balance
-
-            $table->timestamp('last_accrual_date')->nullable();
+            $table->decimal('opening_balance', 8, 2)->default(0);
+            $table->decimal('accrued', 8, 2)->default(0);
+            $table->decimal('taken', 8, 2)->default(0);
+            $table->decimal('adjustment', 8, 2)->default(0);
+            $table->decimal('encashed', 8, 2)->default(0);
+            $table->decimal('lapsed', 8, 2)->default(0);
+            $table->decimal('closing_balance', 8, 2)->default(0);
+            $table->text('notes')->nullable();
             $table->timestamps();
 
             $table->unique(['employee_id', 'leave_type_id', 'year']);
@@ -144,47 +126,28 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('employee_id')->constrained('employees')->cascadeOnDelete();
             $table->foreignId('leave_type_id')->constrained('leave_types')->cascadeOnDelete();
-            $table->foreignId('leave_balance_id')->nullable()->constrained('leave_balances')->nullOnDelete();
-            $table->string('request_number', 30);
-
-            // Leave dates
-            $table->date('start_date');
-            $table->date('end_date');
-            $table->decimal('total_days', 5, 2); // Calculated based on policy
-            $table->string('day_type', 20)->default('full'); // full, first_half, second_half
-
-            // Details
+            $table->date('from_date');
+            $table->date('to_date');
+            $table->decimal('total_days', 5, 2);
+            $table->boolean('is_half_day')->default(false);
+            $table->string('half_day_type', 20)->nullable(); // first_half, second_half
             $table->text('reason');
             $table->string('contact_during_leave')->nullable();
-            $table->foreignId('delegated_to')->nullable()->constrained('employees')->nullOnDelete();
-
-            // Status
-            $table->string('status', 20)->default('pending'); // pending, approved, rejected, cancelled, taken
-            $table->boolean('is_emergency')->default(false);
-
-            // Attachments reference
-            $table->boolean('has_attachments')->default(false);
-
-            // Approval
+            $table->string('address_during_leave')->nullable();
+            $table->string('status', 20)->default('pending'); // draft, pending, approved, rejected, cancelled
             $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('approved_at')->nullable();
-            $table->text('approval_notes')->nullable();
-            $table->foreignId('rejected_by')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('rejected_at')->nullable();
             $table->text('rejection_reason')->nullable();
-
-            // Cancellation
-            $table->foreignId('cancelled_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('cancelled_at')->nullable();
             $table->text('cancellation_reason')->nullable();
-
-            $table->foreignId('created_by')->constrained('users')->cascadeOnDelete();
+            $table->string('attachment_path')->nullable();
+            $table->text('notes')->nullable();
             $table->timestamps();
             $table->softDeletes();
 
             $table->index(['organization_id', 'status']);
             $table->index(['employee_id', 'status']);
-            $table->index(['start_date', 'end_date']);
+            $table->index(['from_date', 'to_date']);
         });
 
         // Leave request attachments

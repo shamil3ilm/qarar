@@ -182,7 +182,7 @@ return new class extends Migration
             $table->boolean('alert_at_100')->default(true);
             $table->timestamps();
 
-            $table->unique(['organization_id', 'category_id', 'department_id', 'year', 'month']);
+            $table->unique(['organization_id', 'category_id', 'department_id', 'year', 'month'], 'expense_budgets_org_cat_dept_yr_mo_unique');
         });
     }
 

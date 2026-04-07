@@ -31,7 +31,7 @@ class FinancialReportController extends Controller
             Carbon::parse($validated['end_date'])
         );
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -49,7 +49,7 @@ class FinancialReportController extends Controller
 
         $report = $this->reportService->getBalanceSheet($asOfDate);
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -67,7 +67,7 @@ class FinancialReportController extends Controller
             Carbon::parse($validated['end_date'])
         );
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -85,7 +85,7 @@ class FinancialReportController extends Controller
 
         $report = $this->reportService->getTrialBalance($asOfDate);
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -95,7 +95,7 @@ class FinancialReportController extends Controller
     {
         $report = $this->reportService->getReceivableAging();
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
     }
 
     /**
@@ -105,6 +105,22 @@ class FinancialReportController extends Controller
     {
         $report = $this->reportService->getPayableAging();
 
-        return response()->json(['data' => $report]);
+        return $this->success($report);
+    }
+
+    /**
+     * Get Actual vs Budget variance report.
+     */
+    public function actualVsBudget(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'budget_type'  => 'nullable|in:annual,quarterly,project,department',
+            'period_start' => 'nullable|date',
+            'period_end'   => 'nullable|date|after_or_equal:period_start',
+        ]);
+
+        $report = $this->reportService->getActualVsBudget(array_filter($validated));
+
+        return $this->success($report);
     }
 }

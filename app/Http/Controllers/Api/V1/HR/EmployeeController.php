@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\HR;
 
+use App\Http\Concerns\SupportsAgGrid;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\HR\EmployeeResource;
 use App\Models\HR\Employee;
@@ -11,18 +12,20 @@ use App\Models\HR\SalaryStructure;
 use App\Services\HR\EmployeeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class EmployeeController extends Controller
 {
+    use SupportsAgGrid;
     public function __construct(
         private EmployeeService $employeeService
-    ) {}
+    ) {
+    }
 
     /**
      * List employees with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = Employee::with(['department', 'designation', 'branch'])
             ->when($request->status, fn($q, $status) => $q->where('employment_status', $status))
@@ -39,13 +42,18 @@ class EmployeeController extends Controller
                         ->orWhere('email', 'like', "%{$search}%");
                 });
             })
-            ->orderBy($request->sort_by ?? 'first_name', $request->sort_order ?? 'asc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['first_name', 'last_name', 'email', 'joining_date', 'employment_status', 'created_at', 'updated_at'], 'first_name'),
+                $this->safeSortOrder($request->sort_order, 'asc')
+            );
 
-        $employees = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        if ($this->isAgGridRequest($request)) {
+            return $this->applyAgGrid($query, $request);
+        }
 
-        return EmployeeResource::collection($employees);
+        $employees = $query->paginate($request->integer('per_page', 15));
+
+        return $this->paginated($employees, EmployeeResource::class);
     }
 
     /**
@@ -54,7 +62,13 @@ class EmployeeController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_number' => 'nullable|string|max:50',
+            'employee_number' => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('employees', 'employee_number')
+                    ->where('organization_id', auth()->user()->organization_id),
+            ],
             'first_name' => 'required|string|max:100',
             'middle_name' => 'nullable|string|max:100',
             'last_name' => 'required|string|max:100',
@@ -62,7 +76,13 @@ class EmployeeController extends Controller
             'gender' => 'nullable|in:male,female,other',
             'marital_status' => 'nullable|in:single,married,divorced,widowed',
             'nationality' => 'nullable|string|max:50',
-            'email' => 'nullable|email|max:200',
+            'email' => [
+                'required',
+                'email',
+                'max:200',
+                Rule::unique('employees', 'email')
+                    ->where('organization_id', auth()->user()->organization_id),
+            ],
             'personal_email' => 'nullable|email|max:200',
             'phone' => 'nullable|string|max:30',
             'mobile' => 'nullable|string|max:30',
@@ -72,11 +92,11 @@ class EmployeeController extends Controller
             'state' => 'nullable|string|max:100',
             'postal_code' => 'nullable|string|max:20',
             'country_code' => 'nullable|string|size:2',
-            'department_id' => 'nullable|exists:departments,id',
-            'designation_id' => 'nullable|exists:designations,id',
-            'branch_id' => 'nullable|exists:branches,id',
-            'reporting_manager_id' => 'nullable|exists:employees,id',
-            'joining_date' => 'nullable|date',
+            'department_id' => ['required', Rule::exists('departments', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'designation_id' => ['required', Rule::exists('designations', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'branch_id' => ['nullable', Rule::exists('branches', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'reporting_manager_id' => ['nullable', Rule::exists('employees', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'joining_date' => 'required|date',
             'employment_type' => 'nullable|in:full_time,part_time,contract,intern,probation',
             'national_id' => 'nullable|string|max:50',
             'passport_number' => 'nullable|string|max:50',
@@ -91,18 +111,15 @@ class EmployeeController extends Controller
 
         $employee = $this->employeeService->create($validated);
 
-        return response()->json([
-            'message' => 'Employee created successfully.',
-            'data' => new EmployeeResource($employee),
-        ], 201);
+        return $this->created(new EmployeeResource($employee), 'Employee created successfully.');
     }
 
     /**
      * Show a specific employee.
      */
-    public function show(Employee $employee): EmployeeResource
+    public function show(Employee $employee): JsonResponse
     {
-        return new EmployeeResource(
+        return $this->success(new EmployeeResource(
             $employee->load([
                 'department',
                 'designation',
@@ -113,7 +130,7 @@ class EmployeeController extends Controller
                 'qualifications',
                 'experiences',
             ])
-        );
+        ));
     }
 
     /**
@@ -122,6 +139,15 @@ class EmployeeController extends Controller
     public function update(Request $request, Employee $employee): JsonResponse
     {
         $validated = $request->validate([
+            'employee_number' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('employees', 'employee_number')
+                    ->where('organization_id', auth()->user()->organization_id)
+                    ->ignore($employee->id),
+            ],
             'first_name' => 'sometimes|string|max:100',
             'middle_name' => 'nullable|string|max:100',
             'last_name' => 'sometimes|string|max:100',
@@ -139,10 +165,10 @@ class EmployeeController extends Controller
             'state' => 'nullable|string|max:100',
             'postal_code' => 'nullable|string|max:20',
             'country_code' => 'nullable|string|size:2',
-            'department_id' => 'nullable|exists:departments,id',
-            'designation_id' => 'nullable|exists:designations,id',
-            'branch_id' => 'nullable|exists:branches,id',
-            'reporting_manager_id' => 'nullable|exists:employees,id',
+            'department_id' => ['nullable', Rule::exists('departments', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'designation_id' => ['nullable', Rule::exists('designations', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'branch_id' => ['nullable', Rule::exists('branches', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'reporting_manager_id' => ['nullable', Rule::exists('employees', 'id')->where('organization_id', auth()->user()->organization_id)],
             'national_id' => 'nullable|string|max:50',
             'passport_number' => 'nullable|string|max:50',
             'passport_expiry' => 'nullable|date',
@@ -156,10 +182,21 @@ class EmployeeController extends Controller
 
         $employee = $this->employeeService->update($employee, $validated);
 
-        return response()->json([
-            'message' => 'Employee updated successfully.',
-            'data' => new EmployeeResource($employee),
-        ]);
+        return $this->success(new EmployeeResource($employee), 'Employee updated successfully.');
+    }
+
+    /**
+     * Deactivate (soft delete) an employee.
+     */
+    public function destroy(Employee $employee): JsonResponse
+    {
+        try {
+            $this->employeeService->terminate($employee, now(), 'deactivated', 'terminated');
+        } catch (\Throwable $e) {
+            return $this->error($e->getMessage(), 'EMPLOYEE_TERMINATE_FAILED', 422);
+        }
+
+        return $this->success(null, 'Employee deactivated successfully.');
     }
 
     /**
@@ -185,10 +222,7 @@ class EmployeeController extends Controller
             $validated['reason'] ?? null
         );
 
-        return response()->json([
-            'message' => 'Salary assigned successfully.',
-            'data' => $salary,
-        ]);
+        return $this->success($salary, 'Salary assigned successfully.');
     }
 
     /**
@@ -205,10 +239,7 @@ class EmployeeController extends Controller
             isset($validated['confirmation_date']) ? new \DateTime($validated['confirmation_date']) : null
         );
 
-        return response()->json([
-            'message' => 'Employee confirmed successfully.',
-            'data' => new EmployeeResource($employee),
-        ]);
+        return $this->success(new EmployeeResource($employee), 'Employee confirmed successfully.');
     }
 
     /**
@@ -229,10 +260,26 @@ class EmployeeController extends Controller
             $validated['status'] ?? 'terminated'
         );
 
-        return response()->json([
-            'message' => 'Employee terminated successfully.',
-            'data' => new EmployeeResource($employee),
+        return $this->success(new EmployeeResource($employee), 'Employee terminated successfully.');
+    }
+
+    /**
+     * Reactivate a terminated employee (rehire workflow).
+     */
+    public function reactivate(Employee $employee, Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'rehire_date' => 'required|date|after:today',
+            'notes'       => 'nullable|string',
         ]);
+
+        try {
+            $employee = $this->employeeService->reactivate($employee, $validated);
+        } catch (\DomainException $e) {
+            return $this->error($e->getMessage(), 'EMPLOYEE_REACTIVATE_FAILED', 422);
+        }
+
+        return $this->success(new EmployeeResource($employee), 'Employee reactivated successfully.');
     }
 
     /**
@@ -242,7 +289,7 @@ class EmployeeController extends Controller
     {
         $stats = $this->employeeService->getStatistics();
 
-        return response()->json(['data' => $stats]);
+        return $this->success($stats);
     }
 
     /**
@@ -250,9 +297,11 @@ class EmployeeController extends Controller
      */
     public function expiringDocuments(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()->can('hr.employees.view'), 403);
+
         $days = (int) ($request->days ?? 30);
         $documents = $this->employeeService->getExpiringDocuments($days);
 
-        return response()->json(['data' => $documents]);
+        return $this->success($documents);
     }
 }

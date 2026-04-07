@@ -4,23 +4,30 @@ declare(strict_types=1);
 
 namespace App\Services\Purchase;
 
+use App\Exceptions\ApiException;
+use App\Exceptions\ErrorCodes;
 use App\Models\Core\Organization;
 use App\Models\Purchase\Bill;
 use App\Models\Purchase\PurchaseOrder;
 use App\Models\Sales\Contact;
+use App\Services\Accounting\JournalEntryFactory;
 use App\Services\Accounting\JournalService;
 use App\Services\Core\NumberGeneratorService;
 use App\Services\Inventory\StockService;
 use App\Services\Tax\TaxCalculatorService;
+use App\Traits\StructuredLogger;
 use Illuminate\Support\Facades\DB;
 
 class BillService
 {
+    use StructuredLogger;
     public function __construct(
         private TaxCalculatorService $taxCalculator,
         private JournalService $journalService,
+        private JournalEntryFactory $journalEntryFactory,
         private StockService $stockService,
-        private NumberGeneratorService $numberGenerator
+        private NumberGeneratorService $numberGenerator,
+        private GoodsReceiptService $goodsReceiptService
     ) {}
 
     /**
@@ -30,10 +37,11 @@ class BillService
     {
         return DB::transaction(function () use ($data, $lines) {
             $organization = Organization::findOrFail(auth()->user()->organization_id);
-            $supplier = Contact::findOrFail($data['supplier_id']);
+            $supplier = Contact::where('organization_id', auth()->user()->organization_id)
+                ->findOrFail($data['supplier_id']);
 
             if (empty($data['bill_number'])) {
-                $prefix = $data['bill_type'] === Bill::TYPE_DEBIT_NOTE ? 'DN' : 'BILL';
+                $prefix = ($data['bill_type'] ?? Bill::TYPE_STANDARD) === Bill::TYPE_DEBIT_NOTE ? 'DN' : 'BILL';
                 $data['bill_number'] = $this->numberGenerator->generate($prefix);
             }
 
@@ -42,8 +50,12 @@ class BillService
             $data['supplier_address'] = $data['supplier_address'] ?? $supplier->getBillingAddress();
 
             $data['currency_code'] = $data['currency_code'] ?? $supplier->currency_code ?? $organization->base_currency;
+            if (isset($data['exchange_rate']) && bccomp((string) $data['exchange_rate'], '0', 4) <= 0) {
+                throw new \InvalidArgumentException('Exchange rate must be positive.');
+            }
             $data['exchange_rate'] = $data['exchange_rate'] ?? 1;
             $data['due_date'] = $data['due_date'] ?? now()->addDays($supplier->payment_terms);
+            $data['status'] = $data['status'] ?? Bill::STATUS_DRAFT;
 
             $bill = Bill::create($data);
 
@@ -54,7 +66,20 @@ class BillService
             );
 
             foreach ($lines as $index => $lineData) {
+                if ((float) ($lineData['quantity'] ?? 0) <= 0 || (float) ($lineData['unit_price'] ?? 0) < 0) {
+                    throw new \InvalidArgumentException('Bill line quantity must be positive and unit price cannot be negative.');
+                }
+
                 $taxLine = $taxResult->lines[$index] ?? [];
+
+                if (empty($lineData['description'])) {
+                    $product = isset($lineData['product_id'])
+                        ? \App\Models\Inventory\Product::withoutGlobalScopes()
+                            ->where('organization_id', $bill->organization_id)
+                            ->find($lineData['product_id'])
+                        : null;
+                    $lineData['description'] = $product?->name ?? '';
+                }
 
                 $bill->lines()->create(array_merge($lineData, [
                     'tax_rate' => $taxLine['tax_rate'] ?? 0,
@@ -89,7 +114,7 @@ class BillService
             if (isset($data['version']) && $data['version'] !== $bill->version) {
                 throw new \App\Exceptions\ConcurrencyException(
                     'Bill has been modified by another user.',
-                    $bill->version
+                    $bill
                 );
             }
 
@@ -106,6 +131,10 @@ class BillService
                 );
 
                 foreach ($lines as $index => $lineData) {
+                    if ((float) ($lineData['quantity'] ?? 0) <= 0 || (float) ($lineData['unit_price'] ?? 0) < 0) {
+                        throw new \InvalidArgumentException('Bill line quantity must be positive and unit price cannot be negative.');
+                    }
+
                     $taxLine = $taxResult->lines[$index] ?? [];
 
                     $bill->lines()->create(array_merge($lineData, [
@@ -132,21 +161,94 @@ class BillService
     /**
      * Approve a bill.
      */
-    public function approve(Bill $bill): Bill
+    public function approve(Bill $bill, int $userId): Bill
     {
         if (!in_array($bill->status, [Bill::STATUS_DRAFT, Bill::STATUS_PENDING], true)) {
             throw new \InvalidArgumentException('Only draft/pending bills can be approved.');
         }
 
-        return DB::transaction(function () use ($bill) {
-            $journal = $this->createJournalEntry($bill);
+        // --- 3-way match enforcement (SAP-style AP enforcement) ---
+        // Run the match INSIDE the approval transaction so that match results and the
+        // bill status update are committed atomically. If approval fails after the match,
+        // the match results roll back with the transaction and no orphaned records remain.
+        return DB::transaction(function () use ($bill, $userId) {
+            // Re-load the bill with a lock to prevent concurrent approvals
+            $bill = Bill::where('id', $bill->id)->lockForUpdate()->firstOrFail();
 
-            $this->addInventory($bill);
+            if (!in_array($bill->status, [Bill::STATUS_DRAFT, Bill::STATUS_PENDING], true)) {
+                throw new \InvalidArgumentException('Only draft/pending bills can be approved.');
+            }
+
+            if ($bill->purchase_order_id) {
+                $purchaseOrder = PurchaseOrder::find($bill->purchase_order_id);
+                if ($purchaseOrder && in_array($purchaseOrder->status, [PurchaseOrder::STATUS_DRAFT, PurchaseOrder::STATUS_CANCELLED], true)) {
+                    throw new \RuntimeException('Cannot approve bill: related purchase order is not approved.');
+                }
+            }
+
+            if ($bill->purchase_order_id) {
+                $matchResult = $this->goodsReceiptService->runThreeWayMatch($bill);
+
+                if (!($matchResult['all_matched'] ?? false)) {
+                    $summary = $matchResult['summary'] ?? [];
+                    throw ApiException::fromError(
+                        ErrorCodes::PURCH_THREE_WAY_MATCH_FAILED,
+                        [
+                            'bill_id'   => $bill->id,
+                            'summary'   => $summary,
+                            'results'   => collect($matchResult['results'] ?? [])
+                                ->where('match_status', '!=', 'matched')
+                                ->values()
+                                ->map(fn($r) => [
+                                    'bill_line_id'    => $r->bill_line_id,
+                                    'match_status'    => $r->match_status,
+                                    'variance_amount' => $r->variance_amount,
+                                ])
+                                ->all(),
+                        ]
+                    );
+                }
+            }
+
+            if (bccomp((string) $bill->total, '0', 4) <= 0) {
+                throw new \InvalidArgumentException('Bill total must be positive before approval.');
+            }
+
+            $journal = $this->createJournalEntry($bill);
+            $journalId = $journal?->id;
+
+            // Only add inventory when no posted Goods Receipt already exists for
+            // this Purchase Order. If a GR was posted, stock was already incremented
+            // there; adding it again here would double-count the inventory.
+            // Also guard against the PurchaseOrderService::receive() path, which
+            // writes stock movements directly without creating a GoodsReceipt record.
+            $hasPostedGr = false;
+            $hasDirectReceive = false;
+            if ($bill->purchase_order_id) {
+                $hasPostedGr = \App\Models\Purchase\GoodsReceipt::where('purchase_order_id', $bill->purchase_order_id)
+                    ->where('status', \App\Models\Purchase\GoodsReceipt::STATUS_POSTED)
+                    ->exists();
+
+                // Check if stock was added via PurchaseOrderService::receive()
+                $hasDirectReceive = \App\Models\Inventory\StockMovement::where('reference_type', 'purchase_order')
+                    ->where('reference_id', $bill->purchase_order_id)
+                    ->where('movement_type', 'purchase')
+                    ->exists();
+            }
+
+            // Idempotency guard: skip inventory if a stock movement for this bill already exists
+            $billInventoryAlreadyAdded = \App\Models\Inventory\StockMovement::where('reference_type', 'bill')
+                ->where('reference_id', $bill->id)
+                ->exists();
+
+            if (!$hasPostedGr && !$hasDirectReceive && !$billInventoryAlreadyAdded) {
+                $this->addInventory($bill);
+            }
 
             $bill->update([
                 'status' => Bill::STATUS_APPROVED,
-                'journal_entry_id' => $journal->id,
-                'approved_by' => auth()->id(),
+                'journal_entry_id' => $journalId,
+                'approved_by' => $userId,
                 'approved_at' => now(),
             ]);
 
@@ -163,12 +265,57 @@ class BillService
             throw new \InvalidArgumentException('Paid bills cannot be voided. Create a debit note instead.');
         }
 
+        if ($bill->status === Bill::STATUS_VOIDED) {
+            throw new \InvalidArgumentException('Bill is already voided.');
+        }
+
+        if ($bill->status === Bill::STATUS_PARTIAL) {
+            throw new \InvalidArgumentException('Partially-paid bills cannot be voided. Reverse existing payments first.');
+        }
+
         return DB::transaction(function () use ($bill, $reason) {
-            if ($bill->journal_entry_id) {
-                $this->journalService->void($bill->journalEntry, $reason);
+            // Re-fetch with a pessimistic lock to prevent concurrent void operations
+            $bill = Bill::where('id', $bill->id)->lockForUpdate()->firstOrFail();
+
+            if ($bill->status === Bill::STATUS_VOIDED) {
+                throw new \InvalidArgumentException('Bill is already voided.');
             }
 
-            $this->reverseInventory($bill);
+            // Prevent voiding if a posted goods receipt exists for the related PO
+            if ($bill->purchase_order_id) {
+                $hasPostedGrForVoid = \App\Models\Purchase\GoodsReceipt::where('purchase_order_id', $bill->purchase_order_id)
+                    ->where('status', \App\Models\Purchase\GoodsReceipt::STATUS_POSTED)
+                    ->exists();
+
+                if ($hasPostedGrForVoid) {
+                    throw new \RuntimeException('Cannot void bill with a posted goods receipt.');
+                }
+            }
+
+            if ($bill->journal_entry_id && ($journalEntry = $bill->journalEntry)) {
+                $this->journalService->void($journalEntry, $reason);
+            }
+
+            // Mirror the approve() guard: only reverse inventory if stock was
+            // originally added by the bill approval path. When a GR or a direct
+            // PurchaseOrderService::receive() added stock, reversal must go through
+            // those respective flows — not through the bill void.
+            $hasPostedGr = false;
+            $hasDirectReceive = false;
+            if ($bill->purchase_order_id) {
+                $hasPostedGr = \App\Models\Purchase\GoodsReceipt::where('purchase_order_id', $bill->purchase_order_id)
+                    ->where('status', \App\Models\Purchase\GoodsReceipt::STATUS_POSTED)
+                    ->exists();
+
+                $hasDirectReceive = \App\Models\Inventory\StockMovement::where('reference_type', 'purchase_order')
+                    ->where('reference_id', $bill->purchase_order_id)
+                    ->where('movement_type', 'purchase')
+                    ->exists();
+            }
+
+            if (!$hasPostedGr && !$hasDirectReceive) {
+                $this->reverseInventory($bill);
+            }
 
             $bill->update([
                 'status' => Bill::STATUS_VOIDED,
@@ -211,86 +358,48 @@ class BillService
             throw new \InvalidArgumentException('No items available to bill.');
         }
 
-        $bill = $this->create([
-            'supplier_id' => $order->supplier_id,
-            'purchase_order_id' => $order->id,
-            'bill_date' => now(),
-            'branch_id' => $order->branch_id,
-            'currency_code' => $order->currency_code,
-            'exchange_rate' => $order->exchange_rate,
-            'discount_type' => $order->discount_type,
-            'discount_value' => $order->discount_value,
-            'notes' => $order->notes,
-            'reference' => $order->order_number,
-        ], $lines);
+        return DB::transaction(function () use ($order, $lines) {
+            $bill = $this->create([
+                'supplier_id' => $order->supplier_id,
+                'purchase_order_id' => $order->id,
+                'bill_date' => now(),
+                'branch_id' => $order->branch_id,
+                'currency_code' => $order->currency_code,
+                'exchange_rate' => $order->exchange_rate,
+                'discount_type' => $order->discount_type,
+                'discount_value' => $order->discount_value,
+                'notes' => $order->notes,
+                'reference' => $order->order_number,
+            ], $lines);
 
-        foreach ($bill->lines as $billLine) {
-            if ($billLine->product_id) {
-                $orderLine = $order->lines()
-                    ->where('product_id', $billLine->product_id)
-                    ->where('variant_id', $billLine->variant_id)
-                    ->first();
+            foreach ($bill->lines as $billLine) {
+                if ($billLine->product_id) {
+                    $orderLine = $order->lines()
+                        ->where('product_id', $billLine->product_id)
+                        ->where('variant_id', $billLine->variant_id)
+                        ->first();
 
-                if ($orderLine) {
-                    $orderLine->increment('quantity_billed', $billLine->quantity);
+                    if ($orderLine) {
+                        $orderLine->increment('quantity_billed', $billLine->quantity);
+                    }
                 }
             }
-        }
 
-        $progress = $order->fresh()->getReceivingProgress();
-        if ($progress['billing_percentage'] >= 100) {
-            $order->update(['status' => PurchaseOrder::STATUS_BILLED]);
-        }
+            $progress = $order->fresh()->getReceivingProgress();
+            if ($progress['billing_percentage'] >= 100) {
+                $order->update(['status' => PurchaseOrder::STATUS_BILLED]);
+            }
 
-        return $bill;
+            return $bill;
+        });
     }
 
     /**
      * Create journal entry for bill.
      */
-    protected function createJournalEntry(Bill $bill): \App\Models\Accounting\JournalEntry
+    protected function createJournalEntry(Bill $bill): ?\App\Models\Accounting\JournalEntry
     {
-        $supplier = $bill->supplier;
-        $payableAccountId = $supplier->payable_account_id ?? config('erp.default_accounts.payable');
-
-        $lines = [];
-
-        foreach ($bill->lines as $line) {
-            $accountId = $line->account_id ?? $line->product?->expense_account_id ?? config('erp.default_accounts.expense');
-
-            $lines[] = [
-                'account_id' => $accountId,
-                'description' => $line->description,
-                'debit' => $line->subtotal,
-                'credit' => 0,
-            ];
-        }
-
-        if ($bill->tax_amount > 0) {
-            $lines[] = [
-                'account_id' => config('erp.default_accounts.tax_receivable'),
-                'description' => "Input VAT/GST on Bill {$bill->bill_number}",
-                'debit' => $bill->tax_amount,
-                'credit' => 0,
-            ];
-        }
-
-        $lines[] = [
-            'account_id' => $payableAccountId,
-            'description' => "Bill {$bill->bill_number} - {$supplier->getDisplayName()}",
-            'debit' => 0,
-            'credit' => $bill->total,
-            'contact_id' => $supplier->id,
-        ];
-
-        return $this->journalService->create([
-            'entry_date' => $bill->bill_date,
-            'reference' => $bill->bill_number,
-            'description' => "Purchase Bill - {$supplier->getDisplayName()}",
-            'source_type' => Bill::class,
-            'source_id' => $bill->id,
-            'branch_id' => $bill->branch_id,
-        ], $lines);
+        return $this->journalEntryFactory->forBill($bill);
     }
 
     /**
@@ -338,12 +447,13 @@ class BillService
     }
 
     /**
-     * Mark overdue bills.
+     * Transition all past-due approved/partial bills to overdue status.
+     * Returns the number of bills updated.
      */
     public function markOverdueBills(): int
     {
         return Bill::whereIn('status', [Bill::STATUS_APPROVED, Bill::STATUS_PARTIAL])
             ->where('due_date', '<', now())
-            ->count();
+            ->update(['status' => Bill::STATUS_OVERDUE]);
     }
 }

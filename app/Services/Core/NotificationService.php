@@ -11,6 +11,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
@@ -42,23 +43,31 @@ class NotificationService
 
         // Create database notification
         if (in_array('database', $enabledChannels)) {
-            $notification = Notification::create([
-                'id' => Str::uuid()->toString(),
-                'organization_id' => $user->organization_id,
-                'user_id' => $user->id,
-                'type' => $type,
-                'title' => $title,
-                'message' => $message,
-                'icon' => $data['icon'] ?? null,
-                'color' => $data['color'] ?? null,
-                'action_url' => $actionUrl,
-                'action_text' => $actionText,
-                'notifiable_type' => $notifiable ? get_class($notifiable) : null,
-                'notifiable_id' => $notifiable?->id,
-                'data' => $data,
-                'channel' => 'database',
-                'sent_at' => now(),
-            ]);
+            try {
+                $notification = Notification::create([
+                    'id' => Str::uuid()->toString(),
+                    'organization_id' => $user->organization_id,
+                    'user_id' => $user->id,
+                    'type' => $type,
+                    'title' => $title,
+                    'message' => $message,
+                    'icon' => $data['icon'] ?? null,
+                    'color' => $data['color'] ?? null,
+                    'action_url' => $actionUrl,
+                    'action_text' => $actionText,
+                    'notifiable_type' => $notifiable ? get_class($notifiable) : null,
+                    'notifiable_id' => $notifiable?->id,
+                    'data' => $data,
+                    'channel' => 'database',
+                    'sent_at' => now(),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('NotificationService: failed to create notification', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $user->id,
+                    'type' => $type,
+                ]);
+            }
         }
 
         // Send email notification
@@ -90,6 +99,8 @@ class NotificationService
     ): int {
         $count = 0;
 
+        $users = collect($users)->unique(fn($u) => is_object($u) ? $u->id : $u['id'] ?? $u);
+
         foreach ($users as $user) {
             if ($this->send($user, $type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels)) {
                 $count++;
@@ -114,12 +125,16 @@ class NotificationService
         array $data = [],
         array $channels = ['database']
     ): int {
-        $users = User::where('organization_id', $organizationId)
-            ->where('is_active', true)
-            ->get()
-            ->filter(fn ($user) => $user->hasPermission($permission));
+        $sent = 0;
 
-        return $this->sendToMany($users, $type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels);
+        User::where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->whereHas('roles.permissions', fn ($q) => $q->where('name', $permission))
+            ->chunkById(100, function ($users) use ($type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels, &$sent): void {
+                $sent += $this->sendToMany($users, $type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels);
+            });
+
+        return $sent;
     }
 
     /**
@@ -136,11 +151,15 @@ class NotificationService
         array $data = [],
         array $channels = ['database']
     ): int {
-        $users = User::where('organization_id', $organizationId)
-            ->where('is_active', true)
-            ->get();
+        $sent = 0;
 
-        return $this->sendToMany($users, $type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels);
+        User::where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->chunkById(100, function ($users) use ($type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels, &$sent): void {
+                $sent += $this->sendToMany($users, $type, $title, $message, $notifiable, $actionUrl, $actionText, $data, $channels);
+            });
+
+        return $sent;
     }
 
     /**
@@ -360,11 +379,66 @@ class NotificationService
     }
 
     /**
-     * Send push notification (placeholder).
+     * Send push notification.
+     *
+     * Stores the notification in the database (handled by the caller) and logs the
+     * push request.  When a real push provider (Firebase, OneSignal, etc.) is
+     * configured, replace the body of {@see dispatchPushPayload()} with the
+     * provider SDK call.
      */
-    protected function sendPush(User $user, string $title, string $message, array $data): void
+    protected function sendPush(User $user, string $title, string $body, array $data = []): void
     {
-        // TODO: Implement push notifications (Firebase, OneSignal, etc.)
+        $payload = $this->buildPushPayload($user, $title, $body, $data);
+
+        try {
+            $this->dispatchPushPayload($payload);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send push notification', [
+                'user_id' => $user->id,
+                'title'   => $title,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Build a provider-agnostic push payload.
+     *
+     * @return array{user_id: int, title: string, body: string, data: array, device_tokens: array}
+     */
+    protected function buildPushPayload(User $user, string $title, string $body, array $data): array
+    {
+        return [
+            'user_id'       => $user->id,
+            'title'         => $title,
+            'body'          => $body,
+            'data'          => $data,
+            'device_tokens' => [],
+        ];
+    }
+
+    /**
+     * Dispatch the push payload to the configured provider.
+     *
+     * Swap this implementation when integrating Firebase, OneSignal, or any other
+     * push service.  The current implementation only logs the request so the
+     * rest of the pipeline (preference checks, payload building) is exercised
+     * end-to-end during development.
+     */
+    protected function dispatchPushPayload(array $payload): void
+    {
+        // TODO: Integrate with a real push provider (Firebase, OneSignal, etc.).
+        // Replace this method body with the provider SDK call, e.g.:
+        //   FirebaseCloudMessaging::send($payload['device_tokens'], $payload);
+        //   OneSignal::sendToPlayer($payload['device_tokens'], $payload);
+        // Until a provider is configured, push notifications are NOT delivered.
+        Log::info('Push notification not yet integrated with external provider. Skipping.', [
+            'user_id' => $payload['user_id'],
+            'title'   => $payload['title'],
+            'tokens'  => count($payload['device_tokens']),
+        ]);
+
+        return;
     }
 
     // ===================== Convenience methods for common notifications =====================
@@ -393,12 +467,13 @@ class NotificationService
      */
     public function notifyPaymentReceived(Model $payment): void
     {
+        $customerName = $payment->customer?->company_name ?? 'Unknown';
         $this->sendToUsersWithPermission(
             $payment->organization_id,
             'sales.payments.view',
             Notification::TYPE_PAYMENT_RECEIVED,
             'Payment Received',
-            "Payment of {$payment->currency_code} {$payment->amount} received from {$payment->customer->company_name}.",
+            "Payment of {$payment->currency_code} {$payment->amount} received from {$customerName}.",
             $payment,
             "/sales/payments/{$payment->id}",
             'View Payment',

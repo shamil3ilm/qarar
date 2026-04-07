@@ -12,8 +12,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class RecurringProfile extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     protected $fillable = [

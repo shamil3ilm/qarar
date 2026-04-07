@@ -9,7 +9,6 @@ use App\Models\User;
 use App\Services\Core\ModuleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 
 class ModuleController extends Controller
 {
@@ -26,10 +25,10 @@ class ModuleController extends Controller
 
         $modules = $this->moduleService->getAvailableModulesForOrganization($user->organization_id);
 
-        return response()->json([
-            'data' => $modules,
+        return $this->success([
+            'modules' => $modules,
             'subscription_tier' => $user->organization->subscription_tier ?? 'standard',
-        ]);
+        ], 'Modules retrieved successfully');
     }
 
     /**
@@ -44,14 +43,12 @@ class ModuleController extends Controller
 
         $modules = array_filter($allModules, fn ($code) => in_array($code, $enabledModules), ARRAY_FILTER_USE_KEY);
 
-        return response()->json([
-            'data' => array_map(fn ($m, $code) => [
-                'code' => $code,
-                'name' => $m['name'],
-                'icon' => $m['icon'],
-                'color' => $m['color'],
-            ], $modules, array_keys($modules)),
-        ]);
+        return $this->success(array_map(fn ($m, $code) => [
+            'code' => $code,
+            'name' => $m['name'],
+            'icon' => $m['icon'],
+            'color' => $m['color'],
+        ], $modules, array_keys($modules)), 'User modules retrieved successfully');
     }
 
     /**
@@ -63,57 +60,33 @@ class ModuleController extends Controller
 
         $summary = $this->moduleService->getModuleSummary($user->organization_id);
 
-        return response()->json(['data' => $summary]);
+        return $this->success($summary, 'Module summary retrieved successfully');
     }
 
     /**
-     * Enable a module for the organization.
+     * Enable or disable a module for the organisation.
+     * PATCH /modules/{moduleCode}/active  {"active": true|false}
      */
-    public function enable(Request $request, string $moduleCode): JsonResponse
+    public function setActive(Request $request, string $moduleCode): JsonResponse
     {
+        $request->validate(['active' => 'required|boolean']);
+
         $user = $request->user();
 
-        // Check permission
         if (!$user->hasPermission('core.settings.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
         try {
-            $module = $this->moduleService->enableModule(
-                $user->organization_id,
-                $moduleCode,
-                $user->id
-            );
+            if ($request->boolean('active')) {
+                $module = $this->moduleService->enableModule($user->organization_id, $moduleCode, $user->id);
+                return $this->success($module, "Module '{$moduleCode}' has been enabled.");
+            }
 
-            return response()->json([
-                'data' => $module,
-                'message' => "Module '{$moduleCode}' has been enabled.",
-            ]);
-        } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
-        }
-    }
-
-    /**
-     * Disable a module for the organization.
-     */
-    public function disable(Request $request, string $moduleCode): JsonResponse
-    {
-        $user = $request->user();
-
-        // Check permission
-        if (!$user->hasPermission('core.settings.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
-        }
-
-        try {
             $this->moduleService->disableModule($user->organization_id, $moduleCode);
-
-            return response()->json([
-                'message' => "Module '{$moduleCode}' has been disabled.",
-            ]);
+            return $this->success(null, "Module '{$moduleCode}' has been disabled.");
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            return $this->error($e->getMessage(), 'INVALID_ARGUMENT', 400);
         }
     }
 
@@ -126,17 +99,13 @@ class ModuleController extends Controller
 
         // Check permission
         if (!$user->hasPermission('core.settings.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'features' => 'required|array',
             'features.*' => 'required|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         try {
             $this->moduleService->setEnabledFeatures(
@@ -145,11 +114,9 @@ class ModuleController extends Controller
                 $request->get('features')
             );
 
-            return response()->json([
-                'message' => 'Module features updated successfully.',
-            ]);
+            return $this->success(null, 'Module features updated successfully.');
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['error' => $e->getMessage()], 400);
+            return $this->error($e->getMessage(), 'INVALID_ARGUMENT', 400);
         }
     }
 
@@ -177,7 +144,7 @@ class ModuleController extends Controller
             ];
         }
 
-        return response()->json(['data' => $result]);
+        return $this->success($result, 'Subscription tiers retrieved successfully');
     }
 
     /**
@@ -189,10 +156,10 @@ class ModuleController extends Controller
 
         $isEnabled = $this->moduleService->isModuleEnabled($user->organization_id, $moduleCode);
 
-        return response()->json([
+        return $this->success([
             'module' => $moduleCode,
             'is_enabled' => $isEnabled,
-        ]);
+        ], 'Module status retrieved successfully');
     }
 
     /**
@@ -204,11 +171,11 @@ class ModuleController extends Controller
 
         $isEnabled = $this->moduleService->isFeatureEnabled($user->organization_id, $moduleCode, $feature);
 
-        return response()->json([
+        return $this->success([
             'module' => $moduleCode,
             'feature' => $feature,
             'is_enabled' => $isEnabled,
-        ]);
+        ], 'Feature status retrieved successfully');
     }
 
     /**
@@ -220,30 +187,23 @@ class ModuleController extends Controller
 
         // Check permission
         if (!$currentUser->hasPermission('core.users.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
-        $validator = Validator::make($request->all(), [
+        $request->validate([
             'modules' => 'required|array',
             'modules.*' => 'required|string',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
 
         $targetUser = User::where('organization_id', $currentUser->organization_id)
             ->findOrFail($userId);
 
         $this->moduleService->setUserModuleAccess($targetUser, $request->get('modules'));
 
-        return response()->json([
-            'message' => 'User module access updated successfully.',
-            'data' => [
-                'user_id' => $userId,
-                'modules' => $targetUser->fresh()->module_access,
-            ],
-        ]);
+        return $this->success([
+            'user_id' => $userId,
+            'modules' => $targetUser->fresh()->module_access,
+        ], 'User module access updated successfully.');
     }
 
     /**
@@ -255,7 +215,7 @@ class ModuleController extends Controller
 
         // Check permission
         if (!$currentUser->hasPermission('core.users.edit')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
         $targetUser = User::where('organization_id', $currentUser->organization_id)
@@ -263,9 +223,7 @@ class ModuleController extends Controller
 
         $this->moduleService->clearUserModuleAccess($targetUser);
 
-        return response()->json([
-            'message' => 'User now has access to all organization modules.',
-        ]);
+        return $this->success(null, 'User now has access to all organization modules.');
     }
 
     /**
@@ -277,7 +235,7 @@ class ModuleController extends Controller
 
         // Users can view their own access, admins can view others
         if ($userId !== $currentUser->id && !$currentUser->hasPermission('core.users.view')) {
-            return response()->json(['error' => 'Permission denied'], 403);
+            return $this->forbidden('Permission denied');
         }
 
         $targetUser = User::where('organization_id', $currentUser->organization_id)
@@ -285,12 +243,10 @@ class ModuleController extends Controller
 
         $accessibleModules = $this->moduleService->getUserModules($targetUser);
 
-        return response()->json([
-            'data' => [
-                'user_id' => $userId,
-                'has_restrictions' => !empty($targetUser->module_access),
-                'modules' => $accessibleModules,
-            ],
-        ]);
+        return $this->success([
+            'user_id' => $userId,
+            'has_restrictions' => !empty($targetUser->module_access),
+            'modules' => $accessibleModules,
+        ], 'User module access retrieved successfully');
     }
 }

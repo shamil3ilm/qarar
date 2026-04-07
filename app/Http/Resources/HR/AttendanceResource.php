@@ -13,6 +13,7 @@ class AttendanceResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'organization_id' => $this->organization_id,
             'attendance_date' => $this->attendance_date?->toDateString(),
             'status' => $this->status,
 

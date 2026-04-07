@@ -10,45 +10,31 @@ use App\Models\Inventory\StockAdjustment;
 use App\Services\Inventory\StockAdjustmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class StockAdjustmentController extends Controller
 {
     public function __construct(
         private StockAdjustmentService $adjustmentService
-    ) {}
+    ) {
+    }
 
     /**
      * List stock adjustments.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
-        $query = StockAdjustment::with(['warehouse', 'creator', 'poster'])
-            ->latest();
-
-        if ($request->has('warehouse_id')) {
-            $query->inWarehouse($request->integer('warehouse_id'));
-        }
-
-        if ($request->has('status')) {
-            $query->where('status', $request->input('status'));
-        }
-
-        if ($request->has('reason')) {
-            $query->byReason($request->input('reason'));
-        }
-
-        if ($request->has('from_date')) {
-            $query->where('adjustment_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->has('to_date')) {
-            $query->where('adjustment_date', '<=', $request->input('to_date'));
-        }
+        $query = StockAdjustment::with(['warehouse', 'lines.product', 'lines.variant', 'creator', 'poster'])
+            ->latest()
+            ->when($request->has('warehouse_id'), fn($q) => $q->inWarehouse($request->integer('warehouse_id')))
+            ->when($request->has('status'), fn($q) => $q->where('status', $request->input('status')))
+            ->when($request->has('reason'), fn($q) => $q->byReason($request->input('reason')))
+            ->when($request->has('from_date'), fn($q) => $q->where('adjustment_date', '>=', $request->input('from_date')))
+            ->when($request->has('to_date'), fn($q) => $q->where('adjustment_date', '<=', $request->input('to_date')));
 
         $adjustments = $query->paginate($request->integer('per_page', 15));
 
-        return StockAdjustmentResource::collection($adjustments);
+        return $this->paginated($adjustments, StockAdjustmentResource::class);
     }
 
     /**
@@ -57,28 +43,30 @@ class StockAdjustmentController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'warehouse_id' => 'required|integer|exists:warehouses,id',
+            'warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'adjustment_date' => 'required|date',
             'reason' => 'required|in:damage,theft,expiry,count_correction,opening_balance,other',
             'notes' => 'nullable|string|max:1000',
             'lines' => 'required|array|min:1',
-            'lines.*.product_id' => 'required|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
+            'lines.*.product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.location_id' => 'nullable|integer|exists:warehouse_locations,id',
             'lines.*.actual_quantity' => 'required|numeric|min:0',
+            'lines.*.system_quantity' => 'nullable|numeric',
+            'lines.*.unit_cost' => 'nullable|numeric',
             'lines.*.notes' => 'nullable|string|max:255',
         ]);
 
-        $adjustment = $this->adjustmentService->create(
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines']
-        );
+        try {
+            $adjustment = $this->adjustmentService->create(
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines']
+            );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock adjustment created successfully.',
-            'data' => new StockAdjustmentResource($adjustment),
-        ], 201);
+            return $this->created(new StockAdjustmentResource($adjustment), 'Stock adjustment created successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -88,10 +76,7 @@ class StockAdjustmentController extends Controller
     {
         $stockAdjustment->load(['warehouse', 'lines.product', 'lines.variant', 'creator', 'poster']);
 
-        return response()->json([
-            'success' => true,
-            'data' => new StockAdjustmentResource($stockAdjustment),
-        ]);
+        return $this->success(new StockAdjustmentResource($stockAdjustment));
     }
 
     /**
@@ -99,29 +84,39 @@ class StockAdjustmentController extends Controller
      */
     public function update(Request $request, StockAdjustment $stockAdjustment): JsonResponse
     {
+        if (!$stockAdjustment->isEditable()) {
+            return $this->error(
+                'Only draft adjustments can be updated.',
+                'INVALID_STATUS',
+                422
+            );
+        }
+
         $validated = $request->validate([
             'adjustment_date' => 'sometimes|date',
             'reason' => 'sometimes|in:damage,theft,expiry,count_correction,opening_balance,other',
             'notes' => 'nullable|string|max:1000',
             'lines' => 'nullable|array|min:1',
-            'lines.*.product_id' => 'required|integer|exists:products,id',
-            'lines.*.variant_id' => 'nullable|integer|exists:product_variants,id',
+            'lines.*.product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'lines.*.variant_id' => ['nullable', 'integer', Rule::exists('product_variants', 'id')->where('organization_id', auth()->user()->organization_id)],
             'lines.*.location_id' => 'nullable|integer|exists:warehouse_locations,id',
             'lines.*.actual_quantity' => 'required|numeric|min:0',
+            'lines.*.system_quantity' => 'nullable|numeric',
+            'lines.*.unit_cost' => 'nullable|numeric',
             'lines.*.notes' => 'nullable|string|max:255',
         ]);
 
-        $adjustment = $this->adjustmentService->update(
-            $stockAdjustment,
-            collect($validated)->except('lines')->toArray(),
-            $validated['lines'] ?? null
-        );
+        try {
+            $adjustment = $this->adjustmentService->update(
+                $stockAdjustment,
+                collect($validated)->except('lines')->toArray(),
+                $validated['lines'] ?? null
+            );
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock adjustment updated successfully.',
-            'data' => new StockAdjustmentResource($adjustment),
-        ]);
+            return $this->success(new StockAdjustmentResource($adjustment), 'Stock adjustment updated successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -129,13 +124,21 @@ class StockAdjustmentController extends Controller
      */
     public function post(StockAdjustment $stockAdjustment): JsonResponse
     {
-        $adjustment = $this->adjustmentService->post($stockAdjustment);
+        if (!$stockAdjustment->canPost()) {
+            return $this->error(
+                'Adjustment cannot be posted. Only draft adjustments with lines can be posted.',
+                'INVALID_STATUS',
+                422
+            );
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock adjustment posted successfully.',
-            'data' => new StockAdjustmentResource($adjustment),
-        ]);
+        try {
+            $adjustment = $this->adjustmentService->post($stockAdjustment, auth()->id());
+
+            return $this->success(new StockAdjustmentResource($adjustment), 'Stock adjustment posted successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -143,13 +146,21 @@ class StockAdjustmentController extends Controller
      */
     public function cancel(StockAdjustment $stockAdjustment): JsonResponse
     {
-        $adjustment = $this->adjustmentService->cancel($stockAdjustment);
+        if ($stockAdjustment->status !== StockAdjustment::STATUS_DRAFT) {
+            return $this->error(
+                'Only draft adjustments can be cancelled.',
+                'INVALID_STATUS',
+                422
+            );
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock adjustment cancelled.',
-            'data' => new StockAdjustmentResource($adjustment),
-        ]);
+        try {
+            $adjustment = $this->adjustmentService->cancel($stockAdjustment);
+
+            return $this->success(new StockAdjustmentResource($adjustment), 'Stock adjustment cancelled.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 
     /**
@@ -159,10 +170,7 @@ class StockAdjustmentController extends Controller
     {
         $summary = $this->adjustmentService->getSummary($stockAdjustment);
 
-        return response()->json([
-            'success' => true,
-            'data' => $summary,
-        ]);
+        return $this->success($summary);
     }
 
     /**
@@ -171,28 +179,29 @@ class StockAdjustmentController extends Controller
     public function quickAdjust(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'product_id' => 'required|integer|exists:products,id',
-            'warehouse_id' => 'required|integer|exists:warehouses,id',
+            'product_id' => ['required', 'integer', Rule::exists('products', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'warehouse_id' => ['required', 'integer', Rule::exists('warehouses', 'id')->where('organization_id', auth()->user()->organization_id)],
             'actual_quantity' => 'required|numeric|min:0',
             'reason' => 'required|in:damage,theft,expiry,count_correction,opening_balance,other',
             'notes' => 'nullable|string|max:500',
         ]);
 
-        $adjustment = $this->adjustmentService->quickAdjust(
-            $validated['product_id'],
-            $validated['warehouse_id'],
-            $validated['actual_quantity'],
-            $validated['reason'],
-            $validated['notes'] ?? null
-        );
+        try {
+            $adjustment = $this->adjustmentService->quickAdjust(
+                $validated['product_id'],
+                $validated['warehouse_id'],
+                $validated['actual_quantity'],
+                $validated['reason'],
+                auth()->id(),
+                $validated['notes'] ?? null
+            );
 
-        // Auto-post quick adjustments
-        $this->adjustmentService->post($adjustment);
+            // Auto-post quick adjustments
+            $this->adjustmentService->post($adjustment, auth()->id());
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Stock adjusted successfully.',
-            'data' => new StockAdjustmentResource($adjustment->fresh()),
-        ]);
+            return $this->success(new StockAdjustmentResource($adjustment->fresh()), 'Stock adjusted successfully.');
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
     }
 }

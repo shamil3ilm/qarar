@@ -12,16 +12,11 @@ class CheckPermission
 {
     public function handle(Request $request, Closure $next, string ...$permissions): Response
     {
-        $user = $request->user();
-
+        // ValidateJwtToken middleware has already authenticated the user on the
+        // api guard — re-use that resolved instance instead of re-parsing the JWT.
+        $user = auth('api')->user();
         if (!$user) {
-            return response()->json([
-                'success' => false,
-                'error' => [
-                    'code' => 'UNAUTHORIZED',
-                    'message' => 'Authentication required',
-                ],
-            ], 401);
+            return response()->json(['success' => false, 'error' => ['message' => 'Unauthenticated.']], 401);
         }
 
         // Super admins bypass permission checks
@@ -46,8 +41,7 @@ class CheckPermission
                 'success' => false,
                 'error' => [
                     'code' => 'FORBIDDEN',
-                    'message' => 'You do not have permission to perform this action',
-                    'required_permissions' => $permissions,
+                    'message' => 'You do not have permission to perform this action.',
                 ],
             ], 403);
         }

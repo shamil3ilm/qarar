@@ -4,39 +4,62 @@ declare(strict_types=1);
 
 namespace App\Models\Inventory;
 
+use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductBarcode extends Model
 {
-    protected $fillable = [
-        'product_id',
-        'product_variant_id',
-        'barcode',
-        'barcode_type',
-        'is_primary',
-        'quantity',
-        'unit_id',
-    ];
-
-    protected $casts = [
-        'is_primary' => 'boolean',
-        'quantity' => 'decimal:4',
-    ];
+    use BelongsToOrganization, HasFactory;
 
     // Barcode types
-    public const TYPE_EAN13 = 'EAN13';
-    public const TYPE_EAN8 = 'EAN8';
-    public const TYPE_UPC_A = 'UPC-A';
-    public const TYPE_UPC_E = 'UPC-E';
-    public const TYPE_CODE128 = 'CODE128';
-    public const TYPE_CODE39 = 'CODE39';
-    public const TYPE_QR = 'QR';
-    public const TYPE_DATAMATRIX = 'DATAMATRIX';
-    public const TYPE_INTERNAL = 'INTERNAL';
+    public const TYPE_EAN13 = 'ean13';
+    public const TYPE_EAN8 = 'ean8';
+    public const TYPE_UPC_A = 'upc_a';
+    public const TYPE_UPC_E = 'upc_e';
+    public const TYPE_CODE128 = 'code128';
+    public const TYPE_CODE39 = 'code39';
+    public const TYPE_QR = 'qr';
+    public const TYPE_DATAMATRIX = 'datamatrix';
+    public const TYPE_ITF14 = 'itf14';
+    public const TYPE_ISBN = 'isbn';
+    public const TYPE_ISSN = 'issn';
+    public const TYPE_GS1_128 = 'gs1_128';
+    public const TYPE_CUSTOM = 'custom';
+
+    // Usage types
+    public const USAGE_PRODUCT = 'product';
+    public const USAGE_PACKAGING = 'packaging';
+    public const USAGE_PALLET = 'pallet';
+    public const USAGE_INTERNAL = 'internal';
+    public const USAGE_SHELF = 'shelf';
+    public const USAGE_PRICE_TAG = 'price_tag';
+
+    protected $fillable = [
+        'organization_id',
+        'product_id',
+        'variant_id',
+        'batch_id',
+        'barcode_value',
+        'barcode_type',
+        'barcode_image_path',
+        'usage',
+        'is_primary',
+        'gtin',
+        'gs1_company_prefix',
+        'is_active',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_primary' => 'boolean',
+            'is_active' => 'boolean',
+        ];
+    }
 
     // Relationships
-
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
@@ -44,31 +67,49 @@ class ProductBarcode extends Model
 
     public function variant(): BelongsTo
     {
-        return $this->belongsTo(ProductVariant::class, 'product_variant_id');
-    }
-
-    public function unit(): BelongsTo
-    {
-        return $this->belongsTo(UnitOfMeasure::class, 'unit_id');
+        return $this->belongsTo(ProductVariant::class, 'variant_id');
     }
 
     // Scopes
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
 
     public function scopePrimary($query)
     {
         return $query->where('is_primary', true);
     }
 
-    // Helpers
+    public function scopeByType($query, string $type)
+    {
+        return $query->where('barcode_type', $type);
+    }
 
+    public function scopeByUsage($query, string $usage)
+    {
+        return $query->where('usage', $usage);
+    }
+
+    public function scopeByValue($query, string $value)
+    {
+        return $query->where('barcode_value', $value);
+    }
+
+    public function scopeForProduct($query, int $productId)
+    {
+        return $query->where('product_id', $productId);
+    }
+
+    public function scopeByGtin($query, string $gtin)
+    {
+        return $query->where('gtin', $gtin);
+    }
+
+    // Helpers
     public function isPrimary(): bool
     {
         return $this->is_primary;
-    }
-
-    public function isPackBarcode(): bool
-    {
-        return (float) $this->quantity > 1;
     }
 
     /**
@@ -167,13 +208,13 @@ class ProductBarcode extends Model
     }
 
     /**
-     * Find product by barcode.
+     * Find product by barcode value.
      */
-    public static function findByBarcode(string $barcode, int $organizationId): ?self
+    public static function findByBarcodeValue(string $barcodeValue): ?self
     {
-        return static::where('barcode', $barcode)
-            ->whereHas('product', fn($q) => $q->where('organization_id', $organizationId))
-            ->with(['product', 'variant', 'unit'])
+        return static::where('barcode_value', $barcodeValue)
+            ->where('is_active', true)
+            ->with(['product', 'variant'])
             ->first();
     }
 }

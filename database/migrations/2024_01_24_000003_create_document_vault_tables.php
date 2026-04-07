@@ -44,7 +44,7 @@ return new class extends Migration
             $table->date('document_date')->nullable();
             $table->date('expiry_date')->nullable();
             $table->boolean('is_expiry_notified')->default(false);
-            $table->morphs('documentable'); // Attached to: employee, customer, invoice, etc.
+            $table->nullableMorphs('documentable'); // Attached to: employee, customer, invoice, etc.
             $table->string('access_level', 20)->default('organization'); // organization, branch, private
             $table->boolean('is_archived')->default(false);
             $table->foreignId('uploaded_by')->constrained('users')->cascadeOnDelete();
@@ -55,9 +55,11 @@ return new class extends Migration
 
             $table->index(['organization_id', 'folder_id']);
             $table->index(['organization_id', 'document_type']);
-            $table->index(['documentable_type', 'documentable_id']);
+            // morphs() already creates the documentable index
             $table->index(['organization_id', 'expiry_date']);
-            $table->fullText(['name', 'description']);
+            if (config('database.default') !== 'sqlite') {
+                $table->fullText(['name', 'description']);
+            }
         });
 
         // Document versions
@@ -66,8 +68,10 @@ return new class extends Migration
             $table->foreignId('document_id')->constrained()->cascadeOnDelete();
             $table->unsignedInteger('version_number');
             $table->string('file_path');
+            $table->string('mime_type', 100)->nullable();
             $table->unsignedBigInteger('file_size');
             $table->string('change_summary')->nullable();
+            $table->text('change_notes')->nullable();
             $table->foreignId('uploaded_by')->constrained('users')->cascadeOnDelete();
             $table->timestamps();
 
@@ -84,8 +88,8 @@ return new class extends Migration
             $table->foreignId('granted_by')->constrained('users')->cascadeOnDelete();
             $table->timestamps();
 
-            $table->index(['document_id', 'permissible_type', 'permissible_id']);
-            $table->index(['folder_id', 'permissible_type', 'permissible_id']);
+            $table->index(['document_id', 'permissible_type', 'permissible_id'], 'doc_perm_doc_permissible_idx');
+            $table->index(['folder_id', 'permissible_type', 'permissible_id'], 'doc_perm_folder_permissible_idx');
         });
 
         // Document activity log

@@ -5,16 +5,56 @@ declare(strict_types=1);
 namespace App\Models\HR;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
+use App\Models\Core\Organization;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class LeaveRequest extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine, SoftDeletes;
+    use BelongsToOrganization, HasAuditTrail, HasFactory, HasUuid, HasStateMachine, SoftDeletes;
+
+    protected static function newFactory(): Factory
+    {
+        return new class extends Factory {
+            protected $model = \App\Models\HR\LeaveRequest::class;
+
+            public function definition(): array
+            {
+                $startDate = fake()->dateTimeBetween('+1 day', '+30 days');
+                $totalDays = fake()->numberBetween(1, 5);
+                $endDate = (clone $startDate)->modify('+' . ($totalDays - 1) . ' days');
+
+                return [
+                    'organization_id' => Organization::factory(),
+                    'employee_id' => Employee::factory(),
+                    'leave_type_id' => LeaveType::factory(),
+                    'from_date' => $startDate,
+                    'to_date' => $endDate,
+                    'total_days' => $totalDays,
+                    'is_half_day' => false,
+                    'half_day_type' => null,
+                    'reason' => fake()->sentence(),
+                    'contact_during_leave' => fake()->optional(0.5)->phoneNumber(),
+                    'address_during_leave' => null,
+                    'status' => \App\Models\HR\LeaveRequest::STATUS_PENDING,
+                    'approved_by' => null,
+                    'approved_at' => null,
+                    'rejection_reason' => null,
+                    'cancelled_at' => null,
+                    'cancellation_reason' => null,
+                    'attachment_path' => null,
+                    'notes' => null,
+                ];
+            }
+        };
+    }
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_PENDING = 'pending';
@@ -59,7 +99,7 @@ class LeaveRequest extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }
@@ -96,8 +136,7 @@ class LeaveRequest extends Model
             return 0.5;
         }
 
-        // Simple calculation - excludes weekends/holidays
-        // In a real system, this would be more complex
+        // Simple calendar day count — holiday/weekend exclusion handled at service layer
         return $this->from_date->diffInDays($this->to_date) + 1;
     }
 
@@ -143,6 +182,7 @@ class LeaveRequest extends Model
     public function overlapsWithExisting(): bool
     {
         return self::where('employee_id', $this->employee_id)
+            ->where('organization_id', $this->organization_id)
             ->where('id', '!=', $this->id)
             ->whereIn('status', [self::STATUS_PENDING, self::STATUS_APPROVED])
             ->where(function ($query) {

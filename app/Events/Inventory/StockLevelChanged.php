@@ -4,14 +4,16 @@ declare(strict_types=1);
 
 namespace App\Events\Inventory;
 
+use App\Events\Concerns\HasDomainEventProperties;
+use App\Events\Contracts\DomainEvent;
 use App\Models\Inventory\StockLevel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class StockLevelChanged
+class StockLevelChanged implements DomainEvent
 {
-    use Dispatchable, InteractsWithSockets, SerializesModels;
+    use Dispatchable, HasDomainEventProperties, InteractsWithSockets, SerializesModels;
 
     public function __construct(
         public StockLevel $stockLevel,
@@ -20,7 +22,14 @@ class StockLevelChanged
         public string $movementType,
         public ?string $referenceType = null,
         public ?int $referenceId = null
-    ) {}
+    ) {
+        $this->initDomainEvent();
+    }
+
+    public function organizationId(): int
+    {
+        return $this->stockLevel->organization_id;
+    }
 
     public function isLowStock(): bool
     {

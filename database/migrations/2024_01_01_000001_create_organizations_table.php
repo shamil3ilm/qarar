@@ -44,6 +44,7 @@ return new class extends Migration
             $table->string('logo_url')->nullable();
 
             // Status
+            $table->string('status', 30)->default('active'); // active, suspended, inactive
             $table->boolean('is_active')->default(true);
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('suspended_at')->nullable();

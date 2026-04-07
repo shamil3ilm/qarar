@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class StockLevel extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, HasFactory;
 
     protected $fillable = [
         'organization_id',
@@ -111,12 +113,16 @@ class StockLevel extends Model
      */
     public function reserve(float $quantity): bool
     {
-        if (!$this->hasAvailable($quantity)) {
-            return false;
-        }
+        return DB::transaction(function () use ($quantity): bool {
+            $stock = static::lockForUpdate()->findOrFail($this->id);
 
-        $this->increment('reserved_quantity', $quantity);
-        return true;
+            if (!$stock->hasAvailable($quantity)) {
+                return false;
+            }
+
+            $stock->increment('reserved_quantity', $quantity);
+            return true;
+        });
     }
 
     /**
@@ -124,7 +130,10 @@ class StockLevel extends Model
      */
     public function release(float $quantity): void
     {
-        $this->decrement('reserved_quantity', min($quantity, $this->reserved_quantity));
+        DB::transaction(function () use ($quantity): void {
+            $stock = static::lockForUpdate()->findOrFail($this->id);
+            $stock->decrement('reserved_quantity', min($quantity, (float) $stock->reserved_quantity));
+        });
     }
 
     /**

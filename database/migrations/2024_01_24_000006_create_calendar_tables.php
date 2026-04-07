@@ -44,7 +44,8 @@ return new class extends Migration
             $table->string('status', 20)->default('confirmed'); // tentative, confirmed, cancelled
             $table->string('visibility', 20)->default('default'); // default, public, private
             $table->string('color', 7)->nullable();
-            $table->morphs('related'); // Link to: customer, lead, invoice, employee, etc.
+            $table->nullableMorphs('related'); // Link to: customer, lead, invoice, employee, etc.
+            $table->json('attendees')->nullable(); // Quick attendee list (JSON)
             $table->boolean('is_recurring')->default(false);
             $table->foreignId('recurring_event_id')->nullable(); // Parent recurring event
             $table->timestamps();
@@ -52,7 +53,7 @@ return new class extends Migration
 
             $table->index(['calendar_id', 'start_at', 'end_at']);
             $table->index(['organization_id', 'start_at']);
-            $table->index(['related_type', 'related_id']);
+            // related_type/related_id index already created by morphs()
         });
 
         // Recurring event rules
@@ -60,13 +61,13 @@ return new class extends Migration
             $table->id();
             $table->foreignId('event_id')->constrained('calendar_events')->cascadeOnDelete();
             $table->string('frequency', 20); // daily, weekly, monthly, yearly
-            $table->unsignedTinyInteger('interval')->default(1);
-            $table->json('by_day')->nullable(); // [MO, TU, WE] for weekly
-            $table->unsignedTinyInteger('by_month_day')->nullable(); // 1-31 for monthly
-            $table->unsignedTinyInteger('by_month')->nullable(); // 1-12 for yearly
-            $table->date('until_date')->nullable();
-            $table->unsignedInteger('count')->nullable(); // Max occurrences
-            $table->json('exceptions')->nullable(); // Dates to skip
+            $table->unsignedInteger('interval')->default(1);
+            $table->json('days_of_week')->nullable(); // [MO, TU, WE] for weekly
+            $table->json('days_of_month')->nullable(); // [1, 15] for monthly
+            $table->json('months_of_year')->nullable(); // [1, 6, 12] for yearly
+            $table->date('ends_at')->nullable();
+            $table->unsignedInteger('max_occurrences')->nullable();
+            $table->json('exception_dates')->nullable(); // Dates to skip
             $table->timestamps();
         });
 
@@ -92,49 +93,11 @@ return new class extends Migration
             $table->id();
             $table->foreignId('event_id')->constrained('calendar_events')->cascadeOnDelete();
             $table->string('method', 20)->default('notification'); // notification, email, sms
-            $table->unsignedInteger('minutes_before');
+            $table->unsignedInteger('reminder_minutes')->default(15);
+            $table->unsignedInteger('minutes_before')->nullable(); // legacy alias
             $table->boolean('is_sent')->default(false);
             $table->timestamp('sent_at')->nullable();
             $table->timestamps();
-        });
-
-        // Tasks (integrated with calendar)
-        Schema::create('tasks', function (Blueprint $table) {
-            $table->id();
-            $table->uuid('uuid')->unique();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('assigned_to')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('created_by')->constrained('users')->cascadeOnDelete();
-            $table->string('title');
-            $table->text('description')->nullable();
-            $table->string('priority', 20)->default('medium'); // low, medium, high, urgent
-            $table->string('status', 20)->default('pending'); // pending, in_progress, completed, cancelled
-            $table->date('due_date')->nullable();
-            $table->time('due_time')->nullable();
-            $table->timestamp('completed_at')->nullable();
-            $table->morphs('taskable'); // Link to: customer, lead, opportunity, etc.
-            $table->foreignId('parent_task_id')->nullable()->constrained('tasks')->nullOnDelete();
-            $table->unsignedTinyInteger('progress')->default(0); // 0-100
-            $table->json('tags')->nullable();
-            $table->json('checklist')->nullable(); // Sub-items
-            $table->boolean('is_recurring')->default(false);
-            $table->timestamps();
-            $table->softDeletes();
-
-            $table->index(['organization_id', 'assigned_to', 'status']);
-            $table->index(['organization_id', 'due_date']);
-            $table->index(['taskable_type', 'taskable_id']);
-        });
-
-        // Task comments
-        Schema::create('task_comments', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('task_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->text('content');
-            $table->timestamps();
-
-            $table->index(['task_id', 'created_at']);
         });
 
         // Reminders (standalone)
@@ -154,15 +117,13 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['user_id', 'remind_at', 'is_sent']);
-            $table->index(['remindable_type', 'remindable_id']);
+            // remindable_type/remindable_id index already created by morphs()
         });
     }
 
     public function down(): void
     {
         Schema::dropIfExists('reminders');
-        Schema::dropIfExists('task_comments');
-        Schema::dropIfExists('tasks');
         Schema::dropIfExists('calendar_event_reminders');
         Schema::dropIfExists('calendar_event_attendees');
         Schema::dropIfExists('calendar_recurring_rules');

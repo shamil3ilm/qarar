@@ -8,22 +8,39 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 class BankTransaction extends Model
 {
+    use HasFactory;
+
+    public const STATUS_UNMATCHED   = 'unmatched';
+    public const STATUS_MATCHED     = 'matched';
+    public const STATUS_EXCLUDED    = 'excluded';
+    public const STATUS_RECONCILED  = 'reconciled';
+
     protected $fillable = [
         'bank_account_id',
+        'organization_id',
         'transaction_date',
         'reference',
         'description',
         'debit',
         'credit',
         'running_balance',
+        'status',
+        'category',
+        'matched_transaction_id',
+        'matched_transaction_type',
+        'matched_by',
+        'matched_at',
         'is_reconciled',
         'reconciled_date',
         'journal_entry_id',
         'journal_line_id',
         'source_type',
         'source_id',
+        'import_source',
+        'import_batch_id',
     ];
 
     protected function casts(): array

@@ -12,13 +12,14 @@ use App\Models\HR\LeaveType;
 use App\Services\HR\LeaveService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 
 class LeaveController extends Controller
 {
     public function __construct(
         private LeaveService $leaveService
-    ) {}
+    ) {
+    }
 
     /**
      * List leave types.
@@ -27,13 +28,13 @@ class LeaveController extends Controller
     {
         $types = LeaveType::active()->ordered()->get();
 
-        return response()->json(['data' => $types]);
+        return $this->success($types);
     }
 
     /**
      * List leave requests with filtering.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
         $query = LeaveRequest::with(['employee', 'leaveType', 'approver'])
             ->when($request->status, fn($q, $status) => $q->where('status', $status))
@@ -42,13 +43,14 @@ class LeaveController extends Controller
             ->when($request->pending === 'true', fn($q) => $q->pending())
             ->when($request->start_date, fn($q, $date) => $q->where('from_date', '>=', $date))
             ->when($request->end_date, fn($q, $date) => $q->where('to_date', '<=', $date))
-            ->orderBy($request->sort_by ?? 'from_date', $request->sort_order ?? 'desc');
+            ->orderBy(
+                $this->safeSortBy($request->sort_by, ['from_date', 'to_date', 'status', 'created_at', 'updated_at'], 'from_date'),
+                $this->safeSortOrder($request->sort_order, 'desc')
+            );
 
-        $requests = $request->per_page
-            ? $query->paginate((int) $request->per_page)
-            : $query->get();
+        $requests = $query->paginate($request->integer('per_page', 15));
 
-        return LeaveRequestResource::collection($requests);
+        return $this->paginated($requests, LeaveRequestResource::class);
     }
 
     /**
@@ -57,8 +59,8 @@ class LeaveController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'leave_type_id' => 'required|exists:leave_types,id',
+            'employee_id' => ['required', Rule::exists('employees', 'id')->where('organization_id', auth()->user()->organization_id)],
+            'leave_type_id' => ['required', Rule::exists('leave_types', 'id')->where('organization_id', auth()->user()->organization_id)],
             'from_date' => 'required|date|after_or_equal:today',
             'to_date' => 'required|date|after_or_equal:from_date',
             'is_half_day' => 'nullable|boolean',
@@ -70,22 +72,24 @@ class LeaveController extends Controller
         ]);
 
         $employee = Employee::findOrFail($validated['employee_id']);
-        $leaveRequest = $this->leaveService->createRequest($employee, $validated);
 
-        return response()->json([
-            'message' => 'Leave request created successfully.',
-            'data' => new LeaveRequestResource($leaveRequest),
-        ], 201);
+        try {
+            $leaveRequest = $this->leaveService->createRequest($employee, $validated);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
+
+        return $this->created(new LeaveRequestResource($leaveRequest), 'Leave request created successfully.');
     }
 
     /**
      * Show a specific leave request.
      */
-    public function show(LeaveRequest $leaveRequest): LeaveRequestResource
+    public function show(LeaveRequest $leaveRequest): JsonResponse
     {
-        return new LeaveRequestResource(
+        return $this->success(new LeaveRequestResource(
             $leaveRequest->load(['employee', 'leaveType', 'approver'])
-        );
+        ));
     }
 
     /**
@@ -93,59 +97,50 @@ class LeaveController extends Controller
      */
     public function submit(LeaveRequest $leaveRequest): JsonResponse
     {
-        $request = $this->leaveService->submit($leaveRequest);
+        try {
+            $request = $this->leaveService->submit($leaveRequest);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error($e->getMessage(), 'VALIDATION_ERROR', 422);
+        }
 
-        return response()->json([
-            'message' => 'Leave request submitted successfully.',
-            'data' => new LeaveRequestResource($request),
-        ]);
+        return $this->success(new LeaveRequestResource($request), 'Leave request submitted successfully.');
     }
 
     /**
      * Approve a leave request.
      */
-    public function approve(LeaveRequest $leaveRequest): JsonResponse
-    {
-        $request = $this->leaveService->approve($leaveRequest);
-
-        return response()->json([
-            'message' => 'Leave request approved successfully.',
-            'data' => new LeaveRequestResource($request),
-        ]);
-    }
-
     /**
-     * Reject a leave request.
+     * Approve or reject a leave request.
+     * POST /leave/requests/{id}/review  {"action": "approve"|"reject", "rejection_reason": "..."}
      */
-    public function reject(Request $request, LeaveRequest $leaveRequest): JsonResponse
+    public function review(Request $request, LeaveRequest $leaveRequest): JsonResponse
     {
         $validated = $request->validate([
-            'reason' => 'required|string|max:500',
+            'action'           => 'required|in:approve,reject',
+            'rejection_reason' => 'required_if:action,reject|string|max:500',
         ]);
 
-        $leave = $this->leaveService->reject($leaveRequest, $validated['reason']);
+        if ($validated['action'] === 'approve') {
+            return $this->tryAction(
+                fn() => new LeaveRequestResource($this->leaveService->approve($leaveRequest, auth()->id())),
+                'Leave request approved successfully.',
+            );
+        }
 
-        return response()->json([
-            'message' => 'Leave request rejected.',
-            'data' => new LeaveRequestResource($leave),
-        ]);
+        return $this->tryAction(
+            fn() => new LeaveRequestResource($this->leaveService->reject($leaveRequest, $validated['rejection_reason'], auth()->id())),
+            'Leave request rejected.',
+        );
     }
 
-    /**
-     * Cancel a leave request.
-     */
     public function cancel(Request $request, LeaveRequest $leaveRequest): JsonResponse
     {
-        $validated = $request->validate([
-            'reason' => 'required|string|max:500',
-        ]);
+        $validated = $request->validate(['reason' => 'required|string|max:500']);
 
-        $leave = $this->leaveService->cancel($leaveRequest, $validated['reason']);
-
-        return response()->json([
-            'message' => 'Leave request cancelled.',
-            'data' => new LeaveRequestResource($leave),
-        ]);
+        return $this->tryAction(
+            fn() => new LeaveRequestResource($this->leaveService->cancel($leaveRequest, $validated['reason'])),
+            'Leave request cancelled.',
+        );
     }
 
     /**
@@ -154,14 +149,14 @@ class LeaveController extends Controller
     public function balances(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
+            'employee_id' => ['required', Rule::exists('employees', 'id')->where('organization_id', auth()->user()->organization_id)],
             'year' => 'nullable|integer|min:2000|max:2100',
         ]);
 
         $employee = Employee::findOrFail($validated['employee_id']);
         $balances = $this->leaveService->getAllBalances($employee, $validated['year'] ?? null);
 
-        return response()->json(['data' => $balances]);
+        return $this->success($balances);
     }
 
     /**
@@ -173,11 +168,9 @@ class LeaveController extends Controller
             'year' => 'required|integer|min:2000|max:2100',
         ]);
 
-        $count = $this->leaveService->initializeYearBalances($validated['year']);
+        $count = $this->leaveService->initializeYearBalances($validated['year'], auth()->user()->organization_id);
 
-        return response()->json([
-            'message' => "Initialized leave balances for {$count} employee-leave type combinations.",
-        ]);
+        return $this->success(null, "Initialized leave balances for {$count} employee-leave type combinations.");
     }
 
     /**
@@ -187,6 +180,6 @@ class LeaveController extends Controller
     {
         $summary = $this->leaveService->getOrganizationSummary();
 
-        return response()->json(['data' => $summary]);
+        return $this->success($summary);
     }
 }

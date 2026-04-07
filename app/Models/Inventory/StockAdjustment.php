@@ -5,16 +5,18 @@ declare(strict_types=1);
 namespace App\Models\Inventory;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasStateMachine;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class StockAdjustment extends Model
 {
-    use BelongsToOrganization, HasUuid, HasStateMachine;
+    use BelongsToOrganization, HasAuditTrail, HasUuid, HasStateMachine, HasFactory;
 
     public const STATUS_DRAFT = 'draft';
     public const STATUS_POSTED = 'posted';
@@ -48,7 +50,7 @@ class StockAdjustment extends Model
         ];
     }
 
-    protected function getStateField(): string
+    protected function getStateColumn(): string
     {
         return 'status';
     }

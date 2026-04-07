@@ -63,15 +63,15 @@ class InventoryReportService
             ->get();
 
         $items = [];
-        $totalValue = 0;
-        $totalQuantity = 0;
+        $totalValue = '0';
+        $totalQuantity = '0';
         $categoryTotals = [];
 
         foreach ($stocks as $stock) {
             $method = $valuationMethod ?? $stock->costing_method ?? 'weighted_average';
             $unitCost = $this->getUnitCost($stock, $method);
-            $totalCost = $stock->quantity * $unitCost;
-            $availableQty = $stock->quantity - ($stock->reserved_quantity ?? 0);
+            $totalCost = bcmul((string) $stock->quantity, (string) $unitCost, 4);
+            $availableQty = bcsub((string) $stock->quantity, (string) ($stock->reserved_quantity ?? 0), 4);
 
             $items[] = [
                 'product_id' => $stock->product_id,
@@ -89,15 +89,15 @@ class InventoryReportService
                 'valuation_method' => $method,
             ];
 
-            $totalValue += $totalCost;
-            $totalQuantity += $stock->quantity;
+            $totalValue = bcadd($totalValue, $totalCost, 4);
+            $totalQuantity = bcadd($totalQuantity, (string) $stock->quantity, 4);
 
             $category = $stock->category_name ?? 'Uncategorized';
             if (!isset($categoryTotals[$category])) {
-                $categoryTotals[$category] = ['quantity' => 0, 'value' => 0];
+                $categoryTotals[$category] = ['quantity' => '0', 'value' => '0'];
             }
-            $categoryTotals[$category]['quantity'] += $stock->quantity;
-            $categoryTotals[$category]['value'] += $totalCost;
+            $categoryTotals[$category]['quantity'] = bcadd($categoryTotals[$category]['quantity'], (string) $stock->quantity, 4);
+            $categoryTotals[$category]['value'] = bcadd($categoryTotals[$category]['value'], $totalCost, 4);
         }
 
         // Get warehouse breakdown
@@ -107,6 +107,8 @@ class InventoryReportService
                 'value' => $items->sum('total_value'),
             ];
         })->toArray();
+
+        $itemCount = count($items);
 
         return [
             'report_type' => 'stock_valuation',
@@ -120,8 +122,10 @@ class InventoryReportService
             'summary' => [
                 'total_quantity' => (float) $totalQuantity,
                 'total_value' => (float) $totalValue,
-                'product_count' => count($items),
-                'average_item_value' => count($items) > 0 ? $totalValue / count($items) : 0,
+                'product_count' => $itemCount,
+                'average_item_value' => $itemCount > 0
+                    ? (float) bcdiv($totalValue, (string) $itemCount, 4)
+                    : 0,
             ],
             'by_category' => $categoryTotals,
             'by_warehouse' => $warehouseTotals,
@@ -139,119 +143,143 @@ class InventoryReportService
         ?int $warehouseId = null,
         ?string $movementType = null
     ): array {
-        $query = DB::table('stock_movements as sm')
-            ->join('products as p', 'sm.product_id', '=', 'p.id')
-            ->join('warehouses as w', 'sm.warehouse_id', '=', 'w.id')
-            ->leftJoin('units_of_measure as u', 'p.unit_id', '=', 'u.id')
-            ->leftJoin('users as usr', 'sm.created_by', '=', 'usr.id')
+        $base = DB::table('stock_movements as sm')
             ->where('sm.organization_id', $this->organizationId)
             ->whereBetween('sm.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59']);
 
         if ($productId) {
-            $query->where('sm.product_id', $productId);
+            $base->where('sm.product_id', $productId);
         }
-
         if ($warehouseId) {
-            $query->where('sm.warehouse_id', $warehouseId);
+            $base->where('sm.warehouse_id', $warehouseId);
         }
-
         if ($movementType) {
-            $query->where('sm.movement_type', $movementType);
+            $base->where('sm.movement_type', $movementType);
         }
 
-        $movements = $query->select([
-            'sm.id',
-            'sm.created_at as movement_date',
-            'sm.movement_type',
-            'sm.quantity',
-            'sm.unit_cost',
-            'sm.total_cost',
-            'sm.reference_type',
-            'sm.reference_id',
-            'sm.notes',
-            'p.id as product_id',
-            'p.sku',
-            'p.name as product_name',
-            'w.name as warehouse_name',
-            'u.symbol as unit',
-            'usr.name as created_by',
-        ])
-            ->orderBy('sm.created_at', 'desc')
-            ->get();
+        $inTypes  = ['in', 'purchase', 'return_in', 'adjustment_in', 'transfer_in'];
+        $outTypes = ['out', 'sale', 'return_out', 'adjustment_out', 'transfer_out'];
+        $inList   = implode("','", $inTypes);
+        $outList  = implode("','", $outTypes);
 
-        // Calculate summaries
-        $inMovements = $movements->whereIn('movement_type', ['in', 'purchase', 'return_in', 'adjustment_in', 'transfer_in']);
-        $outMovements = $movements->whereIn('movement_type', ['out', 'sale', 'return_out', 'adjustment_out', 'transfer_out']);
+        // --- Summary via DB CASE SUM (no collection load) ---
+        $summaryRow = (clone $base)->selectRaw("
+            SUM(CASE WHEN movement_type IN ('{$inList}') THEN quantity  ELSE 0 END) as total_in,
+            SUM(CASE WHEN movement_type IN ('{$inList}') THEN total_cost ELSE 0 END) as total_in_value,
+            SUM(CASE WHEN movement_type IN ('{$outList}') THEN quantity  ELSE 0 END) as total_out,
+            SUM(CASE WHEN movement_type IN ('{$outList}') THEN total_cost ELSE 0 END) as total_out_value,
+            COUNT(*) as movement_count
+        ")->first();
 
         $summary = [
-            'total_in' => (float) $inMovements->sum('quantity'),
-            'total_in_value' => (float) $inMovements->sum('total_cost'),
-            'total_out' => (float) $outMovements->sum('quantity'),
-            'total_out_value' => (float) $outMovements->sum('total_cost'),
-            'net_movement' => (float) ($inMovements->sum('quantity') - $outMovements->sum('quantity')),
-            'movement_count' => $movements->count(),
+            'total_in'       => (float) ($summaryRow->total_in ?? 0),
+            'total_in_value' => (float) ($summaryRow->total_in_value ?? 0),
+            'total_out'      => (float) ($summaryRow->total_out ?? 0),
+            'total_out_value'=> (float) ($summaryRow->total_out_value ?? 0),
+            'net_movement'   => (float) (($summaryRow->total_in ?? 0) - ($summaryRow->total_out ?? 0)),
+            'movement_count' => (int) ($summaryRow->movement_count ?? 0),
         ];
 
-        // Group by movement type
-        $byType = $movements->groupBy('movement_type')->map(function ($items, $type) {
-            return [
-                'type' => $type,
-                'label' => $this->getMovementTypeLabel($type),
-                'count' => $items->count(),
-                'quantity' => (float) $items->sum('quantity'),
-                'value' => (float) $items->sum('total_cost'),
-            ];
-        })->values()->toArray();
+        // --- By movement type (DB GROUP BY) ---
+        $byTypeRows = (clone $base)
+            ->selectRaw('sm.movement_type as type, COUNT(*) as cnt, SUM(sm.quantity) as qty, SUM(sm.total_cost) as val')
+            ->groupBy('sm.movement_type')
+            ->orderByDesc('cnt')
+            ->get();
 
-        // Group by product
-        $byProduct = $movements->groupBy('product_id')->map(function ($items) {
-            $first = $items->first();
-            $inQty = $items->whereIn('movement_type', ['in', 'purchase', 'return_in', 'adjustment_in', 'transfer_in'])->sum('quantity');
-            $outQty = $items->whereIn('movement_type', ['out', 'sale', 'return_out', 'adjustment_out', 'transfer_out'])->sum('quantity');
+        $byType = $byTypeRows->map(fn($r) => [
+            'type'     => $r->type,
+            'label'    => $this->getMovementTypeLabel($r->type),
+            'count'    => (int) $r->cnt,
+            'quantity' => (float) $r->qty,
+            'value'    => (float) $r->val,
+        ])->values()->toArray();
 
-            return [
-                'product_id' => $first->product_id,
-                'sku' => $first->sku,
-                'product_name' => $first->product_name,
-                'movement_count' => $items->count(),
-                'total_in' => (float) $inQty,
-                'total_out' => (float) $outQty,
-                'net' => (float) ($inQty - $outQty),
-            ];
-        })->sortByDesc('movement_count')->values()->toArray();
+        // --- By product (DB GROUP BY, top 20) ---
+        $byProductRows = (clone $base)
+            ->join('products as p', 'sm.product_id', '=', 'p.id')
+            ->selectRaw("
+                sm.product_id,
+                p.sku,
+                p.name as product_name,
+                COUNT(*) as movement_count,
+                SUM(CASE WHEN sm.movement_type IN ('{$inList}')  THEN sm.quantity ELSE 0 END) as total_in,
+                SUM(CASE WHEN sm.movement_type IN ('{$outList}') THEN sm.quantity ELSE 0 END) as total_out
+            ")
+            ->groupBy('sm.product_id', 'p.sku', 'p.name')
+            ->orderByDesc('movement_count')
+            ->limit(20)
+            ->get();
+
+        $byProduct = $byProductRows->map(fn($r) => [
+            'product_id'     => $r->product_id,
+            'sku'            => $r->sku,
+            'product_name'   => $r->product_name,
+            'movement_count' => (int) $r->movement_count,
+            'total_in'       => (float) $r->total_in,
+            'total_out'      => (float) $r->total_out,
+            'net'            => (float) ($r->total_in - $r->total_out),
+        ])->values()->toArray();
+
+        // --- Detail rows (capped at 500) ---
+        $detailRows = (clone $base)
+            ->join('products as p', 'sm.product_id', '=', 'p.id')
+            ->join('warehouses as w', 'sm.warehouse_id', '=', 'w.id')
+            ->leftJoin('units_of_measure as u', 'p.unit_id', '=', 'u.id')
+            ->leftJoin('users as usr', 'sm.created_by', '=', 'usr.id')
+            ->select([
+                'sm.id',
+                'sm.created_at as movement_date',
+                'sm.movement_type',
+                'sm.quantity',
+                'sm.unit_cost',
+                'sm.total_cost',
+                'sm.reference_type',
+                'sm.reference_id',
+                'sm.notes',
+                'p.id as product_id',
+                'p.sku',
+                'p.name as product_name',
+                'w.name as warehouse_name',
+                'u.symbol as unit',
+                'usr.name as created_by',
+            ])
+            ->orderBy('sm.created_at', 'desc')
+            ->limit(500)
+            ->get();
+
+        $movements = $detailRows->map(fn($m) => [
+            'id'           => $m->id,
+            'date'         => $m->movement_date,
+            'type'         => $m->movement_type,
+            'type_label'   => $this->getMovementTypeLabel($m->movement_type),
+            'product_id'   => $m->product_id,
+            'sku'          => $m->sku,
+            'product_name' => $m->product_name,
+            'warehouse'    => $m->warehouse_name,
+            'quantity'     => (float) $m->quantity,
+            'unit'         => $m->unit,
+            'unit_cost'    => (float) $m->unit_cost,
+            'total_cost'   => (float) $m->total_cost,
+            'reference'    => $m->reference_type ? "{$m->reference_type}#{$m->reference_id}" : null,
+            'notes'        => $m->notes,
+            'created_by'   => $m->created_by,
+        ])->values()->toArray();
 
         return [
             'report_type' => 'stock_movement',
             'period_start' => $startDate,
-            'period_end' => $endDate,
-            'filters' => [
-                'product_id' => $productId,
-                'warehouse_id' => $warehouseId,
+            'period_end'   => $endDate,
+            'filters'      => [
+                'product_id'    => $productId,
+                'warehouse_id'  => $warehouseId,
                 'movement_type' => $movementType,
             ],
-            'movements' => $movements->map(function ($m) {
-                return [
-                    'id' => $m->id,
-                    'date' => $m->movement_date,
-                    'type' => $m->movement_type,
-                    'type_label' => $this->getMovementTypeLabel($m->movement_type),
-                    'product_id' => $m->product_id,
-                    'sku' => $m->sku,
-                    'product_name' => $m->product_name,
-                    'warehouse' => $m->warehouse_name,
-                    'quantity' => (float) $m->quantity,
-                    'unit' => $m->unit,
-                    'unit_cost' => (float) $m->unit_cost,
-                    'total_cost' => (float) $m->total_cost,
-                    'reference' => $m->reference_type ? "{$m->reference_type}#{$m->reference_id}" : null,
-                    'notes' => $m->notes,
-                    'created_by' => $m->created_by,
-                ];
-            })->values()->toArray(),
-            'summary' => $summary,
-            'by_type' => $byType,
-            'by_product' => array_slice($byProduct, 0, 20), // Top 20 products
-            'generated_at' => now()->toIso8601String(),
+            'movements'     => $movements,
+            'summary'       => $summary,
+            'by_type'       => $byType,
+            'by_product'    => $byProduct,
+            'generated_at'  => now()->toIso8601String(),
         ];
     }
 
@@ -294,13 +322,18 @@ class InventoryReportService
 
         $criticalItems = [];
         $lowItems = [];
-        $totalReorderValue = 0;
+        $totalReorderValue = '0';
 
         foreach ($items as $item) {
-            $availableQty = $item->quantity - ($item->reserved_quantity ?? 0);
-            $shortfall = $item->reorder_level - $item->quantity;
-            $suggestedOrder = max($item->reorder_quantity ?? $shortfall, $shortfall);
-            $orderValue = $suggestedOrder * ($item->average_cost ?? 0);
+            $availableQty = bcsub((string) $item->quantity, (string) ($item->reserved_quantity ?? 0), 4);
+            $shortfall = bcsub((string) $item->reorder_level, (string) $item->quantity, 4);
+            $reorderQty = (string) ($item->reorder_quantity ?? $shortfall);
+            $suggestedOrder = bccomp($reorderQty, $shortfall, 4) >= 0 ? $reorderQty : $shortfall;
+            $orderValue = bcmul($suggestedOrder, (string) ($item->average_cost ?? 0), 4);
+
+            $stockPct = bccomp((string) $item->reorder_level, '0', 4) > 0
+                ? (float) bcdiv(bcmul((string) $item->quantity, '100', 4), (string) $item->reorder_level, 4)
+                : 0.0;
 
             $entry = [
                 'product_id' => $item->product_id,
@@ -316,13 +349,14 @@ class InventoryReportService
                 'shortfall' => (float) $shortfall,
                 'suggested_order' => (float) $suggestedOrder,
                 'estimated_cost' => (float) $orderValue,
-                'stock_percentage' => $item->reorder_level > 0
-                    ? round(($item->quantity / $item->reorder_level) * 100, 1)
-                    : 0,
+                'stock_percentage' => round($stockPct, 1),
             ];
 
             // Critical if stock is below 25% of reorder level or zero
-            if ($item->quantity <= 0 || ($item->quantity / $item->reorder_level) < 0.25) {
+            $stockRatio = bccomp((string) $item->reorder_level, '0', 4) > 0
+                ? (float) bcdiv((string) $item->quantity, (string) $item->reorder_level, 4)
+                : 1.0;
+            if (bccomp((string) $item->quantity, '0', 4) <= 0 || $stockRatio < 0.25) {
                 $entry['severity'] = 'critical';
                 $criticalItems[] = $entry;
             } else {
@@ -330,7 +364,7 @@ class InventoryReportService
                 $lowItems[] = $entry;
             }
 
-            $totalReorderValue += $orderValue;
+            $totalReorderValue = bcadd($totalReorderValue, $orderValue, 4);
         }
 
         return [
@@ -377,9 +411,13 @@ class InventoryReportService
             ->value('cogs') ?? 0;
 
         // Calculate turnover metrics
-        $turnoverRatio = $avgInventory > 0 ? $cogs / $avgInventory : 0;
         $periodDays = \Carbon\Carbon::parse($startDate)->diffInDays($endDate) + 1;
-        $daysInInventory = $turnoverRatio > 0 ? $periodDays / $turnoverRatio : 0;
+        $turnoverRatio = bccomp((string) $avgInventory, '0', 4) > 0
+            ? bcdiv((string) $cogs, (string) $avgInventory, 8)
+            : '0';
+        $daysInInventory = bccomp($turnoverRatio, '0', 8) > 0
+            ? bcdiv((string) $periodDays, $turnoverRatio, 4)
+            : '0';
 
         // Get turnover by category
         $byCategory = DB::table('document_lines as dl')
@@ -409,7 +447,10 @@ class InventoryReportService
                 'cost_of_goods_sold' => (float) $cogs,
                 'turnover_ratio' => round((float) $turnoverRatio, 2),
                 'days_in_inventory' => round((float) $daysInInventory, 1),
-                'annual_turnover' => round((float) ($turnoverRatio * (365 / $periodDays)), 2),
+                'annual_turnover' => round(
+                    (float) bcmul($turnoverRatio, bcdiv('365', (string) $periodDays, 8), 4),
+                    2
+                ),
             ],
             'by_category' => $byCategory,
             'generated_at' => now()->toIso8601String(),
@@ -424,7 +465,7 @@ class InventoryReportService
         $today = now()->toDateString();
         $futureDate = now()->addDays($daysAhead)->toDateString();
 
-        $query = DB::table('product_batches as pb')
+        $query = DB::table('inventory_batches as pb')
             ->join('products as p', 'pb.product_id', '=', 'p.id')
             ->join('warehouses as w', 'pb.warehouse_id', '=', 'w.id')
             ->leftJoin('units_of_measure as u', 'p.unit_id', '=', 'u.id')
@@ -458,7 +499,7 @@ class InventoryReportService
         foreach ($batches as $batch) {
             $expiryDate = \Carbon\Carbon::parse($batch->expiry_date);
             $daysUntilExpiry = now()->startOfDay()->diffInDays($expiryDate, false);
-            $value = $batch->quantity * ($batch->unit_cost ?? 0);
+            $value = bcmul((string) $batch->quantity, (string) ($batch->unit_cost ?? 0), 4);
 
             $entry = [
                 'batch_id' => $batch->id,
