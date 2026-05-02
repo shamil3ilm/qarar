@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 
 class ActivityLogService
 {
-    private const CRITICAL_ACTIONS = [
+    protected const CRITICAL_ACTIONS = [
         \App\Models\Core\ActivityLog::ACTION_CREATED,
         \App\Models\Core\ActivityLog::ACTION_UPDATED,
         \App\Models\Core\ActivityLog::ACTION_DELETED,
@@ -47,6 +47,13 @@ class ActivityLogService
         $shouldStamp = $impersonatedById !== null
             && in_array($data['action'], self::CRITICAL_ACTIONS, true);
 
+        if ($impersonationSessionId !== null && $impersonatedById === null) {
+            \Illuminate\Support\Facades\Log::warning('ActivityLogService: impersonation_session_id present but impersonated_by_id is null — stamp skipped.', [
+                'session_id' => $impersonationSessionId,
+                'action'     => $data['action'] ?? null,
+            ]);
+        }
+
         return ActivityLog::create([
             'organization_id' => $data['organization_id'] ?? $user?->organization_id,
             'user_id' => $data['user_id'] ?? $user?->id,
@@ -55,7 +62,7 @@ class ActivityLogService
             'entity_type' => $data['entity_type'] ?? null,
             'entity_id' => $data['entity_id'] ?? null,
             'entity_name' => $data['entity_name'] ?? null,
-            'description' => $data['description'],
+            'description' => $data['description'] ?? null,
             'old_values' => $data['old_values'] ?? null,
             'new_values' => $data['new_values'] ?? null,
             'changed_fields' => $data['changed_fields'] ?? null,
