@@ -2879,6 +2879,108 @@ git commit -m "test(staff): add Playwright E2E tests for ZATCA module"
 
 ## Phase 9: Final Wiring
 
+### Task 16b: Add logo asset to all three apps
+
+**Files:**
+- Create: `apps/staff/public/logo.svg`
+- Create: `apps/admin/public/logo.svg`
+- Create: `apps/portal/public/logo.svg`
+- Create: `packages/ui/src/components/Logo.tsx`
+
+The logo SVG source is at `docs/superpowers/assets/logo.svg` in the backend repo.
+
+- [ ] **Step 1: Copy logo to all three app public directories**
+
+Create `apps/staff/public/logo.svg`, `apps/admin/public/logo.svg`, `apps/portal/public/logo.svg` — all with the same content:
+
+```svg
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="10" width="100" height="100" rx="20" fill="#1A1F36"/>
+  <path d="M30 75 C40 40, 60 40, 70 75 S100 100, 95 55"
+        stroke="#14B8A6" stroke-width="4" fill="none"/>
+  <circle cx="95" cy="55" r="4" fill="#EADBC8"/>
+</svg>
+```
+
+- [ ] **Step 2: Create `packages/ui/src/components/Logo.tsx`**
+
+```tsx
+interface LogoProps {
+  size?: number
+  className?: string
+}
+
+export function Logo({ size = 32, className }: LogoProps) {
+  return (
+    <img
+      src="/logo.svg"
+      alt="ERP Logo"
+      width={size}
+      height={size}
+      className={className}
+    />
+  )
+}
+```
+
+- [ ] **Step 3: Update `TopBar` to use Logo instead of text**
+
+In `packages/ui/src/components/TopBar.tsx`, replace:
+
+```tsx
+<span className="font-semibold text-gray-900">ERP</span>
+```
+
+with:
+
+```tsx
+<Logo size={28} />
+```
+
+And add the import at the top:
+
+```tsx
+import { Logo } from './Logo'
+```
+
+- [ ] **Step 4: Update login page to show logo**
+
+In `apps/staff/src/routes/login.tsx`, replace:
+
+```tsx
+<h1 className="text-2xl font-bold text-gray-900 mb-6">Sign in to ERP</h1>
+```
+
+with:
+
+```tsx
+<div className="flex flex-col items-center mb-6">
+  <img src="/logo.svg" alt="ERP" width={56} height={56} className="mb-3" />
+  <h1 className="text-2xl font-bold text-gray-900">Sign in to ERP</h1>
+</div>
+```
+
+- [ ] **Step 5: Update vendor portal header to use logo**
+
+The portal `AppShell` equivalent header should display the logo prominently. In `apps/portal/src/main.tsx` (or the portal layout when built), the logo is referenced at `/logo.svg` from `apps/portal/public/`.
+
+- [ ] **Step 6: Export Logo from packages/ui**
+
+Add to `packages/ui/src/index.ts`:
+
+```ts
+export * from './components/Logo'
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/staff/public/logo.svg apps/admin/public/logo.svg apps/portal/public/logo.svg packages/ui/src/components/Logo.tsx
+git commit -m "feat(ui): add logo asset and Logo component, wire into TopBar and login page"
+```
+
+---
+
 ### Task 17: Create env files and verify full build
 
 **Files:**

@@ -1,0 +1,14 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <rect x="10" y="10" width="100" height="100" rx="20" fill="#1A1F36"/>
+
+  <!-- Loop Path -->
+  <path d="M30 75
+           C40 40, 60 40, 70 75
+           S100 100, 95 55"
+        stroke="#14B8A6"
+        stroke-width="4"
+        fill="none"/>
+
+  <!-- Node -->
+  <circle cx="95" cy="55" r="4" fill="#EADBC8"/>
+</svg>
