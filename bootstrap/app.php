@@ -56,7 +56,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'track.response.time'    => TrackResponseTime::class,
             'simulation'             => SimulationMode::class,
             'query.budget'           => \App\Http\Middleware\QueryBudget::class,
-            'track.impersonation'    => \App\Http\Middleware\TrackImpersonation::class,
         ]);
 
         // Security headers on every response
