@@ -52,7 +52,8 @@ class User extends Authenticatable implements JWTSubject, \Illuminate\Contracts\
         'utm_content',
         'referral_code',
         'registration_device_type',
-        'registration_ip',
+        // registration_ip is intentionally excluded from fillable to prevent mass-assignment spoofing.
+        // It is always set explicitly from $request->ip() after User::create().
         'invited_by_user_id',
     ];
 

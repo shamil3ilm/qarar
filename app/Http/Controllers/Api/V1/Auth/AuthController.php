@@ -264,9 +264,13 @@ class AuthController extends Controller
                 'utm_content'              => $request->utm_content,
                 'referral_code'            => $request->referral_code,
                 'registration_device_type' => $request->registration_device_type,
-                'registration_ip'          => $request->ip(),
                 'invited_by_user_id'       => $request->invited_by_user_id,
             ]);
+
+            // Set registration_ip explicitly (not via mass-assignment) so it always reflects
+            // the real server-side IP and can never be spoofed via the request payload.
+            $user->registration_ip = $request->ip();
+            $user->save();
 
             // Attach user to branch
             $user->branches()->attach($branch->id, ['is_default' => true]);

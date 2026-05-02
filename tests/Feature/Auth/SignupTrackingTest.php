@@ -28,7 +28,7 @@ class SignupTrackingTest extends TestCase
         foreach ([
             'registration_source', 'utm_source', 'utm_medium', 'utm_campaign',
             'utm_term', 'utm_content', 'referral_code', 'registration_device_type',
-            'registration_ip', 'invited_by_user_id',
+            'invited_by_user_id',
         ] as $field) {
             $this->assertContains($field, $fillable, "Field {$field} missing from fillable");
         }
@@ -156,6 +156,7 @@ class SignupTrackingTest extends TestCase
         $user = User::where('email', 'ipuser@example.com')->first();
         $this->assertNotNull($user);
         $this->assertNotNull($user->registration_ip);
+        $this->assertSame('127.0.0.1', $user->registration_ip);
     }
 
     public function test_registration_ip_cannot_be_set_from_payload(): void
@@ -177,7 +178,7 @@ class SignupTrackingTest extends TestCase
         $user = User::where('email', 'spoof@example.com')->first();
         $this->assertNotNull($user);
         // The stored IP must equal the server-side IP (127.0.0.1 in tests), not the spoofed value
-        $this->assertNotSame($spoofedIp, $user->registration_ip);
+        $this->assertSame('127.0.0.1', $user->registration_ip);
     }
 
     public function test_existing_registration_flow_unaffected(): void
