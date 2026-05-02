@@ -35,8 +35,10 @@ Route::prefix('auth')->group(function () {
         Route::post('change-password', [AuthController::class, 'changePassword'])->name('auth.change-password');
 
         // Impersonation — end must come before {user} to prevent 'end' being matched as a user ID
-        Route::post('/impersonate/end', [ImpersonationController::class, 'end'])->name('auth.impersonate.end');
-        Route::post('/impersonate/{user}', [ImpersonationController::class, 'start'])->name('auth.impersonate.start');
+        Route::middleware(['check.organization'])->group(function () {
+            Route::post('/impersonate/end', [ImpersonationController::class, 'end'])->name('auth.impersonate.end');
+            Route::post('/impersonate/{user}', [ImpersonationController::class, 'start'])->name('auth.impersonate.start');
+        });
 
         // 2FA management (requires full JWT auth + active organization)
         Route::middleware(['check.organization'])->group(function () {

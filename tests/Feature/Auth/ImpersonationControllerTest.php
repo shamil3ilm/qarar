@@ -81,7 +81,8 @@ class ImpersonationControllerTest extends TestCase
                 'reason' => 'Attempting to impersonate a super admin user',
             ]);
 
-        $response->assertStatus(403);
+        $response->assertStatus(403)
+            ->assertJsonPath('error.code', 'IMPERSONATION_FAILED');
     }
 
     /**
@@ -100,5 +101,19 @@ class ImpersonationControllerTest extends TestCase
 
         $response->assertStatus(400)
             ->assertJsonPath('error.code', 'NOT_IMPERSONATING');
+    }
+
+    /**
+     * Unauthenticated requests to start impersonation must be rejected with 401.
+     */
+    public function test_unauthenticated_cannot_start_impersonation(): void
+    {
+        $target = User::factory()->create(['is_super_admin' => false]);
+
+        $response = $this->postJson(route('auth.impersonate.start', $target->id), [
+            'reason' => 'Unauthenticated attempt to impersonate',
+        ]);
+
+        $response->assertStatus(401);
     }
 }
