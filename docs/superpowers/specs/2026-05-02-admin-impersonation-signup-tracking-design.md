@@ -59,7 +59,7 @@ The `TrackImpersonation` middleware checks the action type before stamping. Read
 
 **Session lifecycle entries** (always logged regardless of action type):
 - `impersonation_started` — logged when the impersonation token is issued, includes `reason` in `metadata`
-- `impersonation_ended` — logged when `POST /auth/impersonate/end` is called or can be inferred from the last activity timestamp
+- `impersonation_ended` — logged when `POST /auth/impersonate/end` is called explicitly. Token expiry does not generate this entry — the absence of an `impersonation_ended` row means the session expired naturally rather than being closed by the admin.
 
 ### API Endpoints
 
@@ -150,7 +150,7 @@ The frontend passes these fields in the `POST /api/v1/auth/register` payload. Th
 ```
 
 `registration_ip` is captured server-side from `$request->ip()` — never trusted from the payload.  
-`invited_by_user_id` is resolved server-side: if `referral_code` maps to an existing user's invitation code, `invited_by_user_id` is set to that user's id. If the code is a partner/external code (no matching user), `invited_by_user_id` remains null and `referral_code` is stored as-is.
+`invited_by_user_id` is passed directly in the payload as a user ID (validated via `exists:users,id`). It is only meaningful when `registration_source = invitation`. External partner/affiliate flows use `referral_code` instead and leave `invited_by_user_id` null.
 
 ### Validation Rules
 
