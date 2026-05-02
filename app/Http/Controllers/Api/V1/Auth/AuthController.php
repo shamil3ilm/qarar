@@ -250,12 +250,22 @@ class AuthController extends Controller
 
             // Create user
             $user = User::create([
-                'organization_id' => $organization->id,
-                'name' => trim($request->name),
-                'email' => $email,
-                'password' => $request->password, // Hashed by model cast
-                'is_active' => true,
-                'timezone' => $this->getDefaultTimezone($request->country_code),
+                'organization_id'          => $organization->id,
+                'name'                     => trim($request->name),
+                'email'                    => $email,
+                'password'                 => $request->password,
+                'is_active'                => true,
+                'timezone'                 => $this->getDefaultTimezone($request->country_code),
+                'registration_source'      => $request->registration_source,
+                'utm_source'               => $request->utm_source,
+                'utm_medium'               => $request->utm_medium,
+                'utm_campaign'             => $request->utm_campaign,
+                'utm_term'                 => $request->utm_term,
+                'utm_content'              => $request->utm_content,
+                'referral_code'            => $request->referral_code,
+                'registration_device_type' => $request->registration_device_type,
+                'registration_ip'          => $request->ip(),
+                'invited_by_user_id'       => $request->invited_by_user_id,
             ]);
 
             // Attach user to branch
