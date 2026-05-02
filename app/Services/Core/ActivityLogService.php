@@ -15,12 +15,37 @@ use Illuminate\Support\Facades\DB;
 
 class ActivityLogService
 {
+    private const CRITICAL_ACTIONS = [
+        \App\Models\Core\ActivityLog::ACTION_CREATED,
+        \App\Models\Core\ActivityLog::ACTION_UPDATED,
+        \App\Models\Core\ActivityLog::ACTION_DELETED,
+        \App\Models\Core\ActivityLog::ACTION_RESTORED,
+        \App\Models\Core\ActivityLog::ACTION_APPROVED,
+        \App\Models\Core\ActivityLog::ACTION_REJECTED,
+        \App\Models\Core\ActivityLog::ACTION_SUBMITTED,
+        \App\Models\Core\ActivityLog::ACTION_EXPORTED,
+        \App\Models\Core\ActivityLog::ACTION_EMAILED,
+        \App\Models\Core\ActivityLog::ACTION_PRINTED,
+        \App\Models\Core\ActivityLog::ACTION_ARCHIVED,
+        \App\Models\Core\ActivityLog::ACTION_IMPERSONATION_STARTED,
+        \App\Models\Core\ActivityLog::ACTION_IMPERSONATION_ENDED,
+    ];
+
     /**
      * Log an activity.
      */
     public function log(array $data): ActivityLog
     {
         $user = auth()->user();
+
+        // Auto-stamp impersonation context when set by TrackImpersonation middleware
+        $impersonatedById = $data['impersonated_by_id']
+            ?? request()->attributes->get('impersonated_by_id');
+        $impersonationSessionId = $data['impersonation_session_id']
+            ?? request()->attributes->get('impersonation_session_id');
+
+        $shouldStamp = $impersonatedById !== null
+            && in_array($data['action'], self::CRITICAL_ACTIONS, true);
 
         return ActivityLog::create([
             'organization_id' => $data['organization_id'] ?? $user?->organization_id,
@@ -43,6 +68,8 @@ class ActivityLogService
             'module' => $data['module'] ?? null,
             'severity' => $data['severity'] ?? ActivityLog::SEVERITY_INFO,
             'is_system' => $data['is_system'] ?? false,
+            'impersonated_by_id'       => $shouldStamp ? $impersonatedById : null,
+            'impersonation_session_id' => $shouldStamp ? $impersonationSessionId : null,
         ]);
     }
 
