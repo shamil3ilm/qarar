@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Accounting;
 
+use App\Models\Accounting\Account;
 use App\Models\Accounting\DocumentSplittingRule;
 use App\Models\Accounting\JournalEntry;
 use App\Models\Accounting\JournalEntryLine;
@@ -18,6 +19,7 @@ class DocumentSplittingSegmentTest extends TestCase
     use RefreshDatabase, TestHelpers;
 
     private DocumentSplittingService $service;
+    private Account $account;
 
     protected function setUp(): void
     {
@@ -25,6 +27,11 @@ class DocumentSplittingSegmentTest extends TestCase
         $this->setUpOrganization();
         $this->setUpAuthenticatedUser();
         $this->service = app(DocumentSplittingService::class);
+        $this->account = Account::factory()->create([
+            'organization_id' => $this->organization->id,
+            'account_type'    => 'income',
+            'sub_type'        => 'sales',
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -41,6 +48,7 @@ class DocumentSplittingSegmentTest extends TestCase
         // Two base lines carrying segment dimension
         $baseLine1 = JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => 'EMEA',
             'debit'            => 6000,
             'credit'           => 0,
@@ -48,6 +56,7 @@ class DocumentSplittingSegmentTest extends TestCase
 
         $baseLine2 = JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => 'APAC',
             'debit'            => 4000,
             'credit'           => 0,
@@ -56,6 +65,7 @@ class DocumentSplittingSegmentTest extends TestCase
         // One line to be split
         $splitLine = JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => null,
             'debit'            => 0,
             'credit'           => 10000,
@@ -100,6 +110,7 @@ class DocumentSplittingSegmentTest extends TestCase
 
         $baseLine = JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => 'EMEA',
             'debit'            => 10000,
             'credit'           => 0,
@@ -108,6 +119,7 @@ class DocumentSplittingSegmentTest extends TestCase
 
         JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => null,
             'debit'            => 0,
             'credit'           => 10000,
@@ -136,6 +148,7 @@ class DocumentSplittingSegmentTest extends TestCase
 
         JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'segment_id'       => null,
             'debit'            => 5000,
             'credit'           => 0,
@@ -144,6 +157,7 @@ class DocumentSplittingSegmentTest extends TestCase
 
         JournalEntryLine::factory()->create([
             'journal_entry_id' => $entry->id,
+            'account_id'       => $this->account->id,
             'debit'            => 0,
             'credit'           => 5000,
         ]);

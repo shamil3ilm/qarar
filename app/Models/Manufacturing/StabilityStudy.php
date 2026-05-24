@@ -10,6 +10,7 @@ use App\Models\Core\Organization;
 use App\Models\Inventory\InventoryBatch;
 use App\Models\Inventory\Product;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class StabilityStudy extends Model
 {
-    use HasUuid;
+    use HasFactory, HasUuid;
     use BelongsToOrganization;
     use SoftDeletes;
 

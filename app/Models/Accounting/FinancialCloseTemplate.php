@@ -6,12 +6,14 @@ namespace App\Models\Accounting;
 
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Concerns\HasUuid;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class FinancialCloseTemplate extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
     use HasUuid;
     use SoftDeletes;

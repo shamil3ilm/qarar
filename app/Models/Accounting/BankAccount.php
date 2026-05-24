@@ -112,7 +112,7 @@ class BankAccount extends Model
     public function recalculateBalance(): void
     {
         $balance = $this->transactions()
-            ->selectRaw('SUM(debit) - SUM(credit) as balance')
+            ->selectRaw("SUM(CASE WHEN transaction_type = 'credit' THEN amount ELSE -amount END) as balance")
             ->value('balance') ?? 0;
 
         $this->update(['current_balance' => $balance]);
@@ -124,7 +124,7 @@ class BankAccount extends Model
     public function getUnreconciledTransactions()
     {
         return $this->transactions()
-            ->where('is_reconciled', false)
+            ->whereNotIn('status', ['reconciled'])
             ->orderBy('transaction_date')
             ->get();
     }

@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace App\Models\Accounting;
 
 use App\Models\Concerns\HasUuid;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class FinancialCloseTemplateTask extends Model
 {
+    use HasFactory;
     use HasUuid;
 
     public const TYPE_JOURNAL        = 'journal';

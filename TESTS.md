@@ -1,8 +1,8 @@
 # Test Inventory & Coverage Checklist
 
-**1,303 passing · 4,020 assertions · SQLite in-memory · RefreshDatabase per class**
+**≥ 2,100 passing · SQLite in-memory · RefreshDatabase per class**
 
-> 39 pre-existing failures (ActivityTypePricingTest, BankStatementImportTest, DocumentSplittingSegmentTest, FinancialCloseCockpitTest) are tracked separately — all due to missing factories or MySQL-only SQL, not regressions.
+> Run `php artisan test --no-coverage` for the exact current count. All known pre-existing failures have been resolved as of 2026-05-24.
 
 ```bash
 php artisan test                        # full suite
@@ -61,6 +61,54 @@ php artisan test tests/Unit/            # unit tests only
 | `ForexService` | ⬜ | Revaluation gain/loss calculation |
 | `PayrollCalculationService` | ⬜ | GOSI/EOSB formulas, prorated salary |
 | `MrpService` | ⬜ | BOM explosion, demand netting |
+
+---
+
+## Feature Tests — Manufacturing (`tests/Feature/Manufacturing/`)
+
+All 38 Manufacturing controllers are covered (308 tests · 569 assertions).
+
+| File | Status | What is Covered |
+|------|--------|----------------|
+| `WorkOrderTest.php` | ✅ | CRUD, release, start, complete, cancel, materials, operations |
+| `BomTest.php` | ✅ | BOM CRUD, activate, clone, explosion |
+| `BomAlternativeTest.php` | ✅ | Alternatives per product, store/validate |
+| `CoProductTest.php` | ✅ | BOM co-products add/update/remove, work order actuals |
+| `ProductionVersionTest.php` | ✅ | Version CRUD, setDefault, forProduct |
+| `RoutingTest.php` | ✅ | Routing CRUD, addOperation |
+| `MrpTest.php` | ✅ | Index, run, forecasts, exceptions |
+| `KanbanTest.php` | ✅ | Supply areas, control cycles, board |
+| `CapacityTest.php` | ✅ | Work centers CRUD, load (date params required), bottlenecks |
+| `CapacityLevelingTest.php` | ✅ | Suggest (from/to required), permission guard |
+| `ProductionSchedulingTest.php` | ✅ | Gantt (from/to required) |
+| `DetailedSchedulingTest.php` | ✅ | Boards index |
+| `RepetitiveManufacturingTest.php` | ✅ | Lines CRUD, schedules |
+| `ProcessOrderTest.php` | ✅ | Recipes CRUD, process orders |
+| `LongTermPlanningTest.php` | ✅ | LTP simulation CRUD |
+| `SubcontractingTest.php` | ✅ | Subcontract orders CRUD, contact + lines required |
+| `ProductCostingTest.php` | ✅ | Costing versions, cost variances, WIP valuations |
+| `ProductCostCollectorTest.php` | ✅ | Cost collectors index |
+| `QualityTest.php` | ✅ | Plans, inspection lots, notifications, stats (date params) |
+| `CertificateOfAnalysisTest.php` | ✅ | CoA CRUD, approve, issue, revoke |
+| `CalibrationTest.php` | ✅ | Equipment, plans, orders, overdue |
+| `SpcTest.php` | ✅ | Xbar-R chart, Cpk calculation |
+| `CapaTest.php` | ✅ | CAPA records CRUD |
+| `Capa8DTest.php` | ✅ | 8D reports CRUD |
+| `AuditManagementTest.php` | ✅ | Audit plans CRUD, checklist items |
+| `ComplaintTest.php` | ✅ | Complaints CRUD |
+| `DynamicModificationTest.php` | ✅ | QM dynamic modification rules |
+| `EngineeringChangeTest.php` | ✅ | ECRs CRUD |
+| `QInfoRecordTest.php` | ✅ | Q-info records CRUD |
+| `QualityCostTest.php` | ✅ | Quality cost entries |
+| `SkipLotTest.php` | ✅ | Skip-lot sampling plans |
+| `StabilityStudyTest.php` | ✅ | Stability studies CRUD |
+| `UsageDecisionTest.php` | ✅ | Usage decisions CRUD |
+| `ScrapReportTest.php` | ✅ | Scrap reporting |
+| `ProcurementInspectionTest.php` | ✅ | Procurement inspection configs + inspections |
+| `ReturnsInspectionTest.php` | ✅ | Returns inspection lots |
+| `SupplierQualityTest.php` | ✅ | Supplier ratings, AVL, NCRs |
+| `ProductionResourceToolTest.php` | ✅ | PRT CRUD, assign, release, available |
+| `PlannedIndependentRequirementTest.php` | ✅ | PIR CRUD |
 
 ---
 
@@ -364,8 +412,8 @@ php artisan test --parallel
 | Materials Management (MM) | ⬜ | ✅ | ✅ | 🔸 |
 | Sales & Distribution (SD) | ✅ | ✅ | ✅ | ✅ |
 | Human Capital Management (HCM) | ⬜ | ✅ | 🔸 | 🔸 |
-| Quality Management (QM) | ⬜ | ⬜ | ✅ | 🔸 |
-| Manufacturing (PP) | ✅ | ⬜ | ✅ | 🔸 |
+| Quality Management (QM) | ⬜ | ✅ | ✅ | ✅ |
+| Manufacturing (PP) | ✅ | ✅ | ✅ | ✅ |
 | Plant Maintenance (PM) | ⬜ | ⬜ | ✅ | 🔸 |
 | Project System (PS) | ⬜ | ⬜ | 🔸 | 🔸 |
 | CRM | ⬜ | ⬜ | ⬜ | ⬜ |

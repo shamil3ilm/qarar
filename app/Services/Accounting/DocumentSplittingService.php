@@ -102,11 +102,11 @@ class DocumentSplittingService
                         'ratio'               => $ratio,
                     ];
 
-                    if ($rule->split_method === 'profit_center') {
-                        $splitItem['profit_center_id'] = $centerId;
-                    } else {
-                        $splitItem['cost_center_id'] = $centerId;
-                    }
+                    match ($rule->split_method) {
+                        'profit_center' => $splitItem['profit_center_id'] = $centerId,
+                        'segment'       => $splitItem['segment_id']       = $centerId,
+                        default         => $splitItem['cost_center_id']   = $centerId,
+                    };
 
                     $preview[] = $splitItem;
                 }
@@ -247,9 +247,11 @@ class DocumentSplittingService
         $grandTotal = 0.0;
 
         foreach ($baseLines as $line) {
-            $centerId = $method === 'profit_center'
-                ? ($line['profit_center_id'] ?? null)
-                : ($line['cost_center_id'] ?? null);
+            $centerId = match ($method) {
+                'profit_center' => $line['profit_center_id'] ?? null,
+                'segment'       => $line['segment_id'] ?? null,
+                default         => $line['cost_center_id'] ?? null,
+            };
 
             if ($centerId === null) {
                 continue;

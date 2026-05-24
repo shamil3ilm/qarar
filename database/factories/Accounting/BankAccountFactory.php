@@ -25,7 +25,7 @@ class BankAccountFactory extends Factory
             'branch_name' => fake()->city() . ' Branch',
             'branch_code' => fake()->numerify('####'),
             'currency_code' => fake()->randomElement(['SAR', 'AED', 'INR', 'USD']),
-            'account_type' => fake()->randomElement(['checking', 'savings', 'current']),
+            'account_type' => fake()->randomElement(['current', 'savings', 'credit_card', 'cash']),
             'gl_account_id' => null,
             'current_balance' => fake()->randomFloat(4, 1000, 500000),
             'last_reconciled_date' => fake()->optional(0.5)->dateTimeBetween('-3 months', 'now'),

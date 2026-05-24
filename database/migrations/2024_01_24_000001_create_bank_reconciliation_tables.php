@@ -85,7 +85,7 @@ return new class extends Migration
             $table->foreignId('bank_account_id')->constrained()->cascadeOnDelete();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->string('file_name');
-            $table->string('file_path');
+            $table->string('file_path')->nullable();
             $table->string('file_type', 10); // csv, ofx, qfx, mt940
             $table->date('statement_start_date')->nullable();
             $table->date('statement_end_date')->nullable();

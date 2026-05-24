@@ -14,13 +14,15 @@ class AccountFactory extends Factory
 
     public function definition(): array
     {
-        $type = fake()->randomElement([
-            Account::TYPE_ASSET,
-            Account::TYPE_LIABILITY,
-            Account::TYPE_EQUITY,
-            Account::TYPE_INCOME,
-            Account::TYPE_EXPENSE,
-        ]);
+        $typeMap = [
+            Account::TYPE_ASSET     => fake()->randomElement(['cash', 'bank', 'receivable', 'inventory', 'fixed_asset', 'other_asset']),
+            Account::TYPE_LIABILITY => fake()->randomElement(['payable', 'credit_card', 'tax_payable', 'other_liability']),
+            Account::TYPE_EQUITY    => fake()->randomElement(['capital', 'retained_earnings', 'drawings']),
+            Account::TYPE_INCOME    => fake()->randomElement(['sales', 'other_income']),
+            Account::TYPE_EXPENSE   => fake()->randomElement(['cost_of_goods', 'operating_expense', 'other_expense']),
+        ];
+        $type    = fake()->randomElement(array_keys($typeMap));
+        $subType = $typeMap[$type];
 
         return [
             'organization_id' => Organization::factory(),
@@ -29,7 +31,7 @@ class AccountFactory extends Factory
             'name' => fake()->words(3, true),
             'description' => fake()->optional(0.5)->sentence(),
             'account_type' => $type,
-            'sub_type' => null,
+            'sub_type' => $subType,
             'currency_code' => fake()->randomElement(['SAR', 'AED', 'INR', 'USD']),
             'is_active' => true,
             'is_system' => false,

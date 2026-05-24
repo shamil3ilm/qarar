@@ -633,8 +633,7 @@ class WorkOrderService
 
         $total = $query->count();
         $draft = (clone $query)->draft()->count();
-        $pending = (clone $query)->pending()->count();
-        $scheduled = (clone $query)->scheduled()->count();
+        $released = (clone $query)->released()->count();
         $inProgress = (clone $query)->inProgress()->count();
         $completed = (clone $query)->completed()->count();
         $cancelled = (clone $query)->cancelled()->count();
@@ -655,8 +654,7 @@ class WorkOrderService
         return [
             'total' => $total,
             'draft' => $draft,
-            'pending' => $pending,
-            'scheduled' => $scheduled,
+            'released' => $released,
             'in_progress' => $inProgress,
             'completed' => $completed,
             'cancelled' => $cancelled,

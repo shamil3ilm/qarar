@@ -6,10 +6,12 @@ namespace App\Models\Accounting;
 
 use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class DocumentSplittingRule extends Model
 {
+    use HasFactory;
     use BelongsToOrganization;
 
     protected $fillable = [

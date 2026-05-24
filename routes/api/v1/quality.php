@@ -105,6 +105,7 @@ Route::prefix('quality')->group(function () {
         ->name('manufacturing.coa.from-lot');
 
     Route::apiResource('certificates-of-analysis', CertificateOfAnalysisController::class)
+        ->parameters(['certificates-of-analysis' => 'certificateOfAnalysis'])
         ->middleware([
             'index'   => 'check.permission:manufacturing.quality.view',
             'show'    => 'check.permission:manufacturing.quality.view',

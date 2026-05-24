@@ -25,7 +25,7 @@ class RoutingController extends Controller
             'product_id', 'is_default', 'valid', 'per_page',
         ]));
 
-        return $this->paginated($routings, fn ($r) => $r);
+        return $this->paginated($routings);
     }
 
     /**
@@ -59,17 +59,17 @@ class RoutingController extends Controller
     /**
      * Show a single routing header with its operations.
      */
-    public function show(RoutingHeader $routingHeader): JsonResponse
+    public function show(RoutingHeader $routing): JsonResponse
     {
-        $routingHeader->load(['product', 'operations.workCenter']);
+        $routing->load(['product', 'operations.workCenter']);
 
-        return $this->success($routingHeader);
+        return $this->success($routing);
     }
 
     /**
      * Update a routing header's metadata (not its operations).
      */
-    public function update(Request $request, RoutingHeader $routingHeader): JsonResponse
+    public function update(Request $request, RoutingHeader $routing): JsonResponse
     {
         $validated = $request->validate([
             'routing_number' => ['nullable', 'string', 'max:30'],
@@ -79,17 +79,17 @@ class RoutingController extends Controller
             'valid_to'       => ['nullable', 'date', 'after_or_equal:valid_from'],
         ]);
 
-        $routingHeader->update($validated);
+        $routing->update($validated);
 
-        return $this->success($routingHeader->fresh(['product', 'operations.workCenter']));
+        return $this->success($routing->fresh(['product', 'operations.workCenter']));
     }
 
     /**
      * Soft-delete a routing header.
      */
-    public function destroy(RoutingHeader $routingHeader): JsonResponse
+    public function destroy(RoutingHeader $routing): JsonResponse
     {
-        $this->routingService->destroy($routingHeader);
+        $this->routingService->destroy($routing);
 
         return $this->success(null, 'Routing deleted successfully.');
     }

@@ -7,6 +7,7 @@ namespace App\Models\Manufacturing;
 use App\Models\Concerns\HasAuditTrail;
 use App\Models\Concerns\HasUuid;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -14,7 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class QmDynamicModificationRule extends Model
 {
-    use HasUuid;
+    use HasFactory, HasUuid;
     use SoftDeletes;
     use HasAuditTrail;
 

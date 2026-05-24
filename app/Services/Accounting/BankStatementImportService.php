@@ -84,9 +84,12 @@ class BankStatementImportService
 
         foreach ($transactions as $tx) {
             $isDuplicate = BankTransaction::where('bank_account_id', $bankAccountId)
-                ->where('transaction_date', $tx['value_date'])
-                ->where('amount', $tx['amount'])
-                ->where('reference', $tx['reference'])
+                ->whereDate('transaction_date', $tx['value_date'])
+                ->where('amount', (string) round((float) $tx['amount'], 4))
+                ->where(function ($q) use ($tx) {
+                    $ref = $tx['reference'] ?: null;
+                    $ref === null ? $q->whereNull('reference') : $q->where('reference', $ref);
+                })
                 ->exists();
 
             if ($isDuplicate) {

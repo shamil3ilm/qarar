@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models\Accounting;
 
+use App\Models\Concerns\HasUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class BankTransaction extends Model
 {
     use HasFactory;
+    use HasUuid;
 
     public const STATUS_UNMATCHED   = 'unmatched';
     public const STATUS_MATCHED     = 'matched';
@@ -19,39 +21,35 @@ class BankTransaction extends Model
     public const STATUS_RECONCILED  = 'reconciled';
 
     protected $fillable = [
-        'bank_account_id',
         'organization_id',
+        'bank_account_id',
         'transaction_date',
+        'value_date',
         'reference',
         'description',
-        'debit',
-        'credit',
-        'running_balance',
+        'transaction_type',
+        'amount',
+        'balance',
         'status',
         'category',
         'matched_transaction_id',
         'matched_transaction_type',
         'matched_by',
         'matched_at',
-        'is_reconciled',
-        'reconciled_date',
-        'journal_entry_id',
-        'journal_line_id',
-        'source_type',
-        'source_id',
         'import_source',
         'import_batch_id',
+        'raw_data',
     ];
 
     protected function casts(): array
     {
         return [
             'transaction_date' => 'date',
-            'debit' => 'decimal:4',
-            'credit' => 'decimal:4',
-            'running_balance' => 'decimal:4',
-            'is_reconciled' => 'boolean',
-            'reconciled_date' => 'date',
+            'value_date'       => 'date',
+            'amount'           => 'decimal:4',
+            'balance'          => 'decimal:4',
+            'matched_at'       => 'datetime',
+            'raw_data'         => 'array',
         ];
     }
 
@@ -85,46 +83,6 @@ class BankTransaction extends Model
     public function source(): MorphTo
     {
         return $this->morphTo('source', 'source_type', 'source_id');
-    }
-
-    /**
-     * Get the net amount (positive for deposits, negative for withdrawals).
-     */
-    public function getNetAmount(): float
-    {
-        return $this->debit - $this->credit;
-    }
-
-    /**
-     * Mark as reconciled.
-     */
-    public function reconcile(?string $date = null): void
-    {
-        $this->update([
-            'is_reconciled' => true,
-            'reconciled_date' => $date ?? now()->toDateString(),
-        ]);
-    }
-
-    /**
-     * Unmark as reconciled.
-     */
-    public function unreconcile(): void
-    {
-        $this->update([
-            'is_reconciled' => false,
-            'reconciled_date' => null,
-        ]);
-    }
-
-    public function scopeUnreconciled($query)
-    {
-        return $query->where('is_reconciled', false);
-    }
-
-    public function scopeReconciled($query)
-    {
-        return $query->where('is_reconciled', true);
     }
 
     public function scopeForPeriod($query, string $startDate, string $endDate)

@@ -25,7 +25,10 @@ return [
         ? explode(',', env('CORS_ALLOWED_ORIGINS'))
         : [],
 
-    'allowed_origins_patterns' => [],
+    // Match any localhost port so Vite port drift never breaks local dev
+    'allowed_origins_patterns' => env('APP_ENV') === 'local'
+        ? ['#^https?://localhost(:\d+)?$#']
+        : [],
 
     'allowed_headers' => [
         'Accept',
@@ -34,6 +37,7 @@ return [
         'X-Requested-With',
         'X-Idempotency-Key',
         'X-Branch-Id',
+        'X-Organization-Id',
     ],
 
     'exposed_headers' => [

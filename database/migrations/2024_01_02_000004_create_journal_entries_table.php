@@ -13,7 +13,7 @@ return new class extends Migration
             $table->uuid('uuid')->unique();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('branch_id')->nullable()->constrained()->nullOnDelete();
-            $table->foreignId('fiscal_year_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('fiscal_year_id')->nullable()->constrained()->nullOnDelete();
 
             // Entry identification
             $table->string('entry_number', 50);

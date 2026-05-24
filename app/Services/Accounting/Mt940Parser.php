@@ -142,13 +142,17 @@ class Mt940Parser
             $pos        += 4;
         }
 
-        // Optional reversal flag
-        if (isset($value[$pos]) && $value[$pos] === 'R') {
-            $pos++;
-        }
-
+        // D/C/RD/RC indicator (reversal credit/debit uses 2 chars)
         $indicator = $value[$pos] ?? 'C';
         $pos++;
+        if (in_array($indicator, ['R', 'E'], true) && isset($value[$pos]) && in_array($value[$pos], ['C', 'D'], true)) {
+            // Reversal: RC or RD — keep the second character as the real indicator
+            $indicator = $value[$pos];
+            $pos++;
+        } elseif (isset($value[$pos]) && $value[$pos] === 'R') {
+            // CR or DR suffix reversal — skip the R
+            $pos++;
+        }
 
         // Amount: digits and comma until first alpha
         preg_match('/^([\d,]+)/', substr($value, $pos), $am);

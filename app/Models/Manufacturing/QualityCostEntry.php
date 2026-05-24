@@ -10,13 +10,14 @@ use App\Models\Core\Organization;
 use App\Models\Inventory\Product;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class QualityCostEntry extends Model
 {
-    use HasUuid;
+    use HasFactory, HasUuid;
     use BelongsToOrganization;
     use SoftDeletes;
 

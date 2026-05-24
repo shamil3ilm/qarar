@@ -28,7 +28,7 @@ return new class extends Migration
             $table->enum('account_type', ['current', 'savings', 'credit_card', 'cash'])->default('current');
 
             // Link to Chart of Accounts
-            $table->foreignId('gl_account_id')->constrained('chart_of_accounts');
+            $table->foreignId('gl_account_id')->nullable()->constrained('chart_of_accounts')->nullOnDelete();
 
             // Current balance (updated via triggers or calculated)
             $table->decimal('current_balance', 18, 4)->default(0);
