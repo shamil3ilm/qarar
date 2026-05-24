@@ -606,6 +606,11 @@ class AuthController extends Controller
         string $message = 'Login successful',
         int $statusCode = 200
     ): JsonResponse {
+        // Eager-load the organization so UserResource emits `user.organization`
+        // (null for super-admins with no organization). The frontend relies on
+        // this to establish tenant context after authentication.
+        $user->loadMissing('organization');
+
         return $this->success([
             'user' => new UserResource($user),
             'token' => $token,
