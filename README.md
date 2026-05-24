@@ -2,7 +2,7 @@
 
 A full-featured, multi-tenant ERP backend built with Laravel 12, designed for businesses in the **GCC region** (Saudi Arabia, UAE, Qatar, Oman, Bahrain, Kuwait) and **India**. Built to SAP-parity standards — covering Financial Accounting, Controlling, HR, Inventory, Manufacturing, Sales, Purchasing, Project System, and Compliance.
 
-**1,064 models · 384 controllers · 386 services · 3,360 API routes · 381 migrations · 714 tests**
+**1,064 models · 384 controllers · 386 services · 3,360 API routes · 381 migrations · 1,303 passing tests**
 
 ---
 

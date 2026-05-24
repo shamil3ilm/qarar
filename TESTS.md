@@ -1,6 +1,8 @@
 # Test Inventory & Coverage Checklist
 
-**714 tests · 2,846 assertions · SQLite in-memory · RefreshDatabase per class**
+**1,303 passing · 4,020 assertions · SQLite in-memory · RefreshDatabase per class**
+
+> 39 pre-existing failures (ActivityTypePricingTest, BankStatementImportTest, DocumentSplittingSegmentTest, FinancialCloseCockpitTest) are tracked separately — all due to missing factories or MySQL-only SQL, not regressions.
 
 ```bash
 php artisan test                        # full suite
@@ -73,8 +75,17 @@ php artisan test tests/Unit/            # unit tests only
 | `LoanTest.php` | ✅ | Disburse, schedule generation, repayment, early settlement |
 | `MultiCurrencyTest.php` | ✅ | Exchange rates, FX posting, period-end revaluation |
 | `ReportTest.php` | ✅ | P&L, Balance Sheet, Trial Balance, Cash Flow |
+| `CreditManagementTest.php` | ✅ | Credit limits CRUD, exposure snapshot, hold/release |
+| `DirectDebitTest.php` | ✅ | Mandates CRUD, activate/pause/cancel, collections, generate |
+| `DisputeManagementTest.php` | ✅ | Dispute cases CRUD, resolve, close, collections worklist |
+| `DocumentSplittingTest.php` | ✅ | Splitting rules CRUD, preview simulation |
+| `DocumentTypeTest.php` | ✅ | Document type CRUD, unique code validation, soft delete |
+| `DunningTest.php` | ✅ | Levels CRUD, run validation, dunning blocks + release |
+| `EbamTest.php` | ✅ | Signatories list/add/revoke, account requests lifecycle |
+| `FxDerivativeTest.php` | ✅ | FX forwards CRUD, designate-hedge, valuate, settle |
+| `GrIrClearingTest.php` | 🔸 | Validation layer only (open-items/report use MySQL-specific SQL) |
+| `HouseBankTest.php` | ✅ | House bank CRUD, account management, advice lifecycle |
 | Missing: `InstallmentPlanTest.php` | ⬜ | Equal/custom plans, payment recording, overdue marking |
-| Missing: `HouseBankTest.php` | ⬜ | Bank CRUD, account management, advice lifecycle |
 | Missing: `WithholdingTaxTest.php` | ⬜ | WHT code CRUD, calculate, apply, certificate |
 | Missing: `PaymentToleranceTest.php` | ⬜ | Tolerance group CRUD, evaluate, clear to GL |
 | Missing: `ParallelLedgerTest.php` | ⬜ | Ledger create, entry fan-out, mapping rules |
@@ -348,8 +359,8 @@ php artisan test --parallel
 
 | Module | Unit | Feature | Journey | Overall |
 |--------|------|---------|---------|---------|
-| Financial Accounting (FI) | 🔸 | 🔸 | ✅ | 🔸 |
-| Controlling (CO) | ⬜ | ⬜ | 🔸 | 🔸 |
+| Financial Accounting (FI) | 🔸 | ✅ | ✅ | ✅ |
+| Controlling (CO) | ⬜ | 🔸 | 🔸 | 🔸 |
 | Materials Management (MM) | ⬜ | ✅ | ✅ | 🔸 |
 | Sales & Distribution (SD) | ✅ | ✅ | ✅ | ✅ |
 | Human Capital Management (HCM) | ⬜ | ✅ | 🔸 | 🔸 |
