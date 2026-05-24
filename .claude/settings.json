@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find app/Http/Controllers -name \"*.php\" -exec php -l {})",
+      "Bash(2)",
+      "Bash(find app/Models app/Services -name \"*.php\" -exec php -l {})",
+      "Bash(grep -r \"unguarded\\\\|guarded\\\\|protected $guarded\\\\|protected $fillable\" /c/laragon/www/erp-backend/app/Models --include=\"*.php\")",
+      "Bash(grep -v \"//\")",
+      "Bash(grep -r \"protected $guarded = \\\\[\\\\]\" /c/laragon/www/erp-backend/app/Models --include=\"*.php\")",
+      "Bash(grep -r \"protected $fillable\" /c/laragon/www/erp-backend/app/Models/Sales/SalesReturn.php)",
+      "Bash(find /c/laragon/www/erp-backend/config -type f -name \"*.php\" -exec basename {})",
+      "Bash(grep -n \"payment_means_code\" \"c:/laragon/www/Zatca/database/migrations/\"*.php)",
+      "Bash(find c:/laragon/www/erp-backend/app/Models/Aml -name *.php)",
+      "Bash(grep -n \"orWhere\" c:/laragon/www/erp-backend/app/Services/CRM/*.php)",
+      "Bash(grep -l \"aml_suspicious_activities\" c:/laragon/www/erp-backend/database/migrations/*.php)",
+      "Bash(grep -n \"is_third_party\\\\|is_nominal\\\\|is_export\\\\|is_summary\\\\|is_self_billed\" \"c:/laragon/www/Zatca/database/migrations/\"*.php)",
+      "Bash(grep -l \"audit_logs\" c:/laragon/www/erp-backend/database/migrations/*.php)",
+      "Bash(grep \"use App\\\\\\\\Events\\\\\\\\|use App\\\\\\\\Events\" c:/laragon/www/erp-backend/app/Listeners/**/*.php)",
+      "Bash(grep -l \"auth\\(\\)\" c:/laragon/www/erp-backend/app/Jobs/*.php)",
+      "Bash(grep -l \"bills\" c:/laragon/www/erp-backend/database/migrations/*.php)",
+      "Bash(grep -h ''attribute_values'' c:/laragon/www/erp-backend/app/Http/Resources/**/*.php)",
+      "Bash(git -C /c/laragon/www/erp-backend diff --stat HEAD)",
+      "Bash(git -C /c/laragon/www/erp-backend add app/Http/Controllers/Api/V1/Accounting/FinancialStatementVersionController.php app/Http/Controllers/Api/V1/Accounting/InstallmentPlanController.php app/Http/Controllers/Api/V1/Accounting/InterCompanyTransferController.php app/Http/Controllers/Api/V1/Accounting/LoanController.php app/Http/Controllers/Api/V1/Accounting/MultiCurrencyController.php app/Http/Controllers/Api/V1/Accounting/PaymentToleranceController.php app/Http/Controllers/Api/V1/CRM/LeadController.php app/Http/Controllers/Api/V1/CRM/OpportunityController.php app/Http/Controllers/Api/V1/Core/CustomerPortalController.php app/Http/Controllers/Api/V1/Customs/CustomsDeclarationController.php app/Http/Controllers/Api/V1/Customs/ExciseDeclarationController.php app/Http/Controllers/Api/V1/Expense/ExpenseController.php app/Http/Controllers/Api/V1/Expense/ExpenseReportController.php app/Http/Controllers/Api/V1/HR/AppraisalReviewController.php app/Http/Controllers/Api/V1/HR/AttendanceController.php app/Http/Controllers/Api/V1/HR/CompensationController.php app/Http/Controllers/Api/V1/HR/ExitManagementController.php app/Http/Controllers/Api/V1/HR/GosiController.php app/Http/Controllers/Api/V1/HR/LeaveController.php app/Http/Controllers/Api/V1/HR/OvertimeController.php app/Http/Controllers/Api/V1/HR/PayrollController.php app/Http/Controllers/Api/V1/HR/PositionController.php app/Http/Controllers/Api/V1/HR/ShiftPlanningController.php app/Http/Controllers/Api/V1/HR/TimeEvaluationController.php app/Http/Controllers/Api/V1/HR/TravelExpenseController.php app/Http/Controllers/Api/V1/HR/TravelExpenseReportController.php app/Http/Controllers/Api/V1/Maintenance/MaintenanceController.php app/Http/Controllers/Api/V1/Projects/ProjectController.php app/Http/Controllers/Api/V1/Sales/BackdatedTransactionController.php app/Http/Controllers/Api/V1/Sales/PaymentReceivedController.php app/Http/Controllers/Api/V1/Sales/PricingConditionController.php app/Http/Controllers/Api/V1/Trade/ImportExportShipmentController.php app/Http/Controllers/Api/V1/Trade/LandedCostController.php app/Http/Controllers/Api/V1/Trade/LetterOfCreditController.php)",
+      "Bash(git -C /c/laragon/www/erp-backend commit -m ':*)",
+      "Read(//c/Users/Shamil/AppData/Local/Temp/claude/c--laragon-www-erp-backend/39a2471b-73c8-43f8-beec-1d3467ad451d/tasks/**)",
+      "Bash(grep -n \"country_code\\\\|vendor_country\" c:/laragon/www/erp-backend/app/Models/Accounting/WithholdingTaxCode.php c:/laragon/www/erp-backend/database/migrations/*.php)",
+      "Bash(grep -r \"use App\\\\\\\\Models\" /c/laragon/www/erp-backend/app/Models/Compliance/ZakatAssessment.php)",
+      "Bash(grep -r \"use App\\\\\\\\Models\" /c/laragon/www/erp-backend/app/Models/Accounting/ZakatAssessment.php)",
+      "PowerShell(cd c:\\\\laragon\\\\www\\\\erp-backend; $tested = Get-ChildItem tests/Feature/Accounting -Name | ForEach-Object { $_ -replace 'Test\\\\.php$', '' }; $controllers = Get-ChildItem app/Http/Controllers/Api/V1/Accounting -Name | ForEach-Object { $_ -replace 'Controller\\\\.php$', '' }; $controllers | Where-Object { $tested -notcontains $_ } | Sort-Object 2>&1)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(pnpm list *)",
+      "Bash(pnpm --filter @erp/types typecheck)",
+      "Bash(pnpm --filter @erp/api-client typecheck)"
+    ],
+    "additionalDirectories": [
+      "c:\\laragon\\www\\erp-backend\\public",
+      "c:\\laragon\\www\\erp-frontend"
+    ]
+  }
+}

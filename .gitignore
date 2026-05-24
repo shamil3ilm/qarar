@@ -37,3 +37,9 @@ fix-imports*.php
 run-tests*.php
 run-mfg-test*.php
 run-module-tests*.php
+
+# Claude Code: share project settings, ignore local/runtime files
+.claude/settings.local.json
+.claude/worktrees/
+.claude/projects/
+.claude/sessions/
