@@ -24,7 +24,7 @@ class IntercompanyReconciliationController extends Controller
             ->orderByDesc('created_at')
             ->paginate((int) $request->get('per_page', 20));
 
-        return $this->paginatedResponse($sessions, 'IC reconciliation sessions retrieved');
+        return $this->paginated($sessions);
     }
 
     /** POST /ic-reconciliation/sessions */
@@ -42,13 +42,13 @@ class IntercompanyReconciliationController extends Controller
             runByUserId:    $request->user()->id,
         );
 
-        return $this->successResponse($session, 'Reconciliation session created', 201);
+        return $this->success($session, 'Reconciliation session created', 201);
     }
 
     /** GET /ic-reconciliation/sessions/{session} */
     public function show(IcReconciliationSession $icReconciliationSession): JsonResponse
     {
-        return $this->successResponse(
+        return $this->success(
             $icReconciliationSession->load(['items', 'matches']),
             'Session retrieved',
         );
@@ -71,7 +71,7 @@ class IntercompanyReconciliationController extends Controller
 
         $this->service->loadItems($icReconciliationSession, $data['items']);
 
-        return $this->successResponse(
+        return $this->success(
             $icReconciliationSession->fresh(),
             'Items loaded into reconciliation session',
         );
@@ -82,7 +82,7 @@ class IntercompanyReconciliationController extends Controller
     {
         $result = $this->service->autoMatch($icReconciliationSession);
 
-        return $this->successResponse($result, 'Auto-match completed');
+        return $this->success($result, 'Auto-match completed');
     }
 
     /** POST /ic-reconciliation/sessions/{session}/manual-match */
@@ -104,7 +104,7 @@ class IntercompanyReconciliationController extends Controller
             notes:      $data['notes'] ?? null,
         );
 
-        return $this->successResponse($match, 'Manual match confirmed', 201);
+        return $this->success($match, 'Manual match confirmed', 201);
     }
 
     /** POST /ic-reconciliation/sessions/{session}/close */
@@ -112,6 +112,6 @@ class IntercompanyReconciliationController extends Controller
     {
         $session = $this->service->closeSession($icReconciliationSession);
 
-        return $this->successResponse($session, 'Session closed');
+        return $this->success($session, 'Session closed');
     }
 }

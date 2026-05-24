@@ -611,6 +611,13 @@ Route::middleware(['auth:api'])->name('fi.installments.')->group(function () {
         ->middleware('check.permission:accounting.installments.view')->name('index');
     Route::post('installment-plans', [InstallmentPlanController::class, 'store'])
         ->middleware('check.permission:accounting.installments.create')->name('store');
+    // Static action routes BEFORE the {installmentPlan} wildcard to avoid misrouting
+    Route::post('installment-plans/mark-overdue', [InstallmentPlanController::class, 'markOverdue'])
+        ->middleware('check.permission:accounting.installments.manage')->name('mark-overdue');
+    Route::get('installment-plans/upcoming', [InstallmentPlanController::class, 'upcoming'])
+        ->middleware('check.permission:accounting.installments.view')->name('upcoming');
+    Route::get('installment-plans/overdue-summary', [InstallmentPlanController::class, 'overdueSummary'])
+        ->middleware('check.permission:accounting.installments.view')->name('overdue-summary');
     Route::get('installment-plans/{installmentPlan}', [InstallmentPlanController::class, 'show'])
         ->middleware('check.permission:accounting.installments.view')->name('show');
     Route::post('installment-plans/{installmentPlan}/activate', [InstallmentPlanController::class, 'activate'])
@@ -619,12 +626,6 @@ Route::middleware(['auth:api'])->name('fi.installments.')->group(function () {
         ->middleware('check.permission:accounting.installments.manage')->name('cancel');
     Route::post('installment-plans/{installmentPlan}/schedules/{installmentSchedule}/pay', [InstallmentPlanController::class, 'recordPayment'])
         ->middleware('check.permission:accounting.installments.post')->name('schedules.pay');
-    Route::post('installment-plans/mark-overdue', [InstallmentPlanController::class, 'markOverdue'])
-        ->middleware('check.permission:accounting.installments.manage')->name('mark-overdue');
-    Route::get('installment-plans/upcoming', [InstallmentPlanController::class, 'upcoming'])
-        ->middleware('check.permission:accounting.installments.view')->name('upcoming');
-    Route::get('installment-plans/overdue-summary', [InstallmentPlanController::class, 'overdueSummary'])
-        ->middleware('check.permission:accounting.installments.view')->name('overdue-summary');
 });
 
 // House Banks & Payment Advices (SAP FI-BL FI12 / FBZP)
