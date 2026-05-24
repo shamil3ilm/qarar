@@ -13,7 +13,9 @@ use App\Http\Controllers\Api\V1\Accounting\PaymentRunController;
 use App\Http\Controllers\Api\V1\Accounting\PostingValidationRuleController;
 use Illuminate\Support\Facades\Route;
 
-Route::apiResource('accruals-deferrals', AccrualDeferralController::class)->names('accounting.accruals');
+Route::apiResource('accruals-deferrals', AccrualDeferralController::class)
+    ->names('accounting.accruals')
+    ->parameters(['accruals-deferrals' => 'accrualDeferral']);
 Route::post('accruals-deferrals/{accrualDeferral}/post-period', [AccrualDeferralController::class, 'postPeriod'])
     ->name('accounting.accruals.post-period');
 

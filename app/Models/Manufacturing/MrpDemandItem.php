@@ -14,9 +14,10 @@ class MrpDemandItem extends Model
     use HasFactory;
 
     public const SOURCE_SALES_ORDER = 'sales_order';
-    public const SOURCE_FORECAST = 'forecast';
+    public const SOURCE_FORECAST    = 'forecast';
     public const SOURCE_SAFETY_STOCK = 'safety_stock';
-    public const SOURCE_BOM = 'bom';
+    public const SOURCE_BOM         = 'bom';
+    public const SOURCE_PIR         = 'pir'; // Planned Independent Requirement (MD61)
 
     protected $fillable = [
         'mrp_run_id',

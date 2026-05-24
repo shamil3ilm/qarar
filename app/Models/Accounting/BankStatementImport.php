@@ -25,7 +25,8 @@ class BankStatementImport extends Model
     public const FILE_TYPE_CSV = 'csv';
     public const FILE_TYPE_OFX = 'ofx';
     public const FILE_TYPE_QFX = 'qfx';
-    public const FILE_TYPE_MT940 = 'mt940';
+    public const FILE_TYPE_MT940   = 'mt940';
+    public const FILE_TYPE_CAMT053 = 'camt053';
 
     protected $fillable = [
         'organization_id',

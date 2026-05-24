@@ -18,6 +18,9 @@ class JournalEntryLine extends Model
         'base_debit',
         'base_credit',
         'cost_center_id',
+        'profit_center_id',
+        'segment_id',
+        'category',
         'contact_id',
         'line_order',
     ];

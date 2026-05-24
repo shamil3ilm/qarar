@@ -34,7 +34,7 @@ class ArInterestRunService
         $totalInterest = 0.0;
 
         foreach ($invoices as $invoice) {
-            $daysOverdue  = $invoice->getDaysOverdueAttribute();
+            $daysOverdue  = $invoice->getDaysPastDue();
             $annualRate   = (float) ($params['annual_rate'] ?? 12.0);   // default 12% p.a.
             $interest     = $this->calculateInterest(
                 (float) $invoice->amount_due,
@@ -51,7 +51,7 @@ class ArInterestRunService
             $lines[] = [
                 'invoice_id'     => $invoice->id,
                 'invoice_number' => $invoice->invoice_number,
-                'contact_name'   => $invoice->contact?->name,
+                'contact_name'   => $invoice->contact?->company_name ?? $invoice->contact?->contact_name,
                 'due_date'       => $invoice->due_date?->toDateString(),
                 'days_overdue'   => $daysOverdue,
                 'outstanding'    => (float) $invoice->amount_due,
@@ -72,7 +72,7 @@ class ArInterestRunService
      *
      * @return array{lines: array[], total_interest: float, journal_entries_posted: int}
      */
-    public function execute(int $organizationId, int $branchId, array $params, int $userId): array
+    public function execute(int $organizationId, int $branchId, array $params, int $_userId): array
     {
         $preview = $this->preview($organizationId, $params);
 
@@ -81,12 +81,12 @@ class ArInterestRunService
         }
 
         $arAccount      = Account::where('organization_id', $organizationId)
-            ->where('account_subtype', Account::SUBTYPE_RECEIVABLE)
+            ->where('sub_type', Account::SUBTYPE_RECEIVABLE)
             ->where('is_active', true)
             ->first();
 
         $incomeAccount  = Account::where('organization_id', $organizationId)
-            ->where('account_subtype', Account::SUBTYPE_OTHER_INCOME)
+            ->where('sub_type', Account::SUBTYPE_OTHER_INCOME)
             ->where('is_active', true)
             ->first();
 
@@ -99,7 +99,7 @@ class ArInterestRunService
 
         $posted = 0;
 
-        DB::transaction(function () use ($preview, $arAccount, $incomeAccount, $organizationId, $branchId, $userId, &$posted): void {
+        DB::transaction(function () use ($preview, $arAccount, $incomeAccount, $organizationId, $branchId, &$posted): void {
             $runDate = now()->toDateString();
 
             foreach ($preview['lines'] as $line) {
@@ -132,7 +132,7 @@ class ArInterestRunService
 
     private function selectOverdueInvoices(int $organizationId, array $params): Collection
     {
-        $query = Invoice::with('contact:id,name')
+        $query = Invoice::with('contact:id,company_name,contact_name')
             ->where('organization_id', $organizationId)
             ->where('status', Invoice::STATUS_OVERDUE)
             ->where('amount_due', '>', 0)
@@ -144,11 +144,13 @@ class ArInterestRunService
         }
 
         if (! empty($params['min_days_overdue'])) {
-            $query->whereRaw('DATEDIFF(CURRENT_DATE, due_date) >= ?', [(int) $params['min_days_overdue']]);
+            // due_date <= today - min_days → at least that many days past due
+            $query->where('due_date', '<=', now()->subDays((int) $params['min_days_overdue'])->toDateString());
         }
 
         if (! empty($params['max_days_overdue'])) {
-            $query->whereRaw('DATEDIFF(CURRENT_DATE, due_date) <= ?', [(int) $params['max_days_overdue']]);
+            // due_date >= today - max_days → no more than max_days past due
+            $query->where('due_date', '>=', now()->subDays((int) $params['max_days_overdue'])->toDateString());
         }
 
         return $query->get();

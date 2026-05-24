@@ -14,6 +14,8 @@ class JournalEntrySplitItem extends Model
         'original_line_id',
         'profit_center_id',
         'cost_center_id',
+        'segment_id',
+        'split_method',
         'debit_amount',
         'credit_amount',
         'currency_code',

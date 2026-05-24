@@ -91,6 +91,11 @@ class InspectionLot extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    public function usageDecision(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(UsageDecision::class, 'inspection_lot_id');
+    }
+
     // Scopes
 
     public function scopePending($query)

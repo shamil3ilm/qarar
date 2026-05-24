@@ -39,7 +39,7 @@ class CashFlowForecastService
             // Opening balance — sum of all bank transaction running totals.
             // Use the most recent bank transaction balance per account as a proxy.
             $openingBalance = BankTransaction::where('organization_id', $organization->id)
-                ->selectRaw('SUM(running_balance) as total')
+                ->selectRaw('SUM(balance) as total')
                 ->whereIn('id', function ($sub) {
                     $sub->selectRaw('MAX(id)')
                         ->from('bank_transactions')

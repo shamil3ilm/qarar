@@ -31,14 +31,14 @@ class CoReconciliationController extends Controller
             $request->only(['fiscal_year', 'period', 'status']),
         );
 
-        return $this->successResponse($runs);
+        return $this->success($runs);
     }
 
     public function show(string $id): JsonResponse
     {
         $run = CoReconciliationRun::with(['entries.senderCostCenter', 'entries.receiverCostCenter', 'entries.costElement', 'postedBy:id,name'])->findOrFail($id);
 
-        return $this->successResponse($run);
+        return $this->success($run);
     }
 
     public function reconcileAssessment(Request $request): JsonResponse
@@ -57,10 +57,10 @@ class CoReconciliationController extends Controller
         );
 
         if ($run === null) {
-            return $this->successResponse(null, 'No cross-company postings found — reconciliation not required');
+            return $this->success(null, 'No cross-company postings found — reconciliation not required');
         }
 
-        return $this->successResponse($run->load('entries'), 'CO reconciliation entries posted', 201);
+        return $this->success($run->load('entries'), 'CO reconciliation entries posted', 201);
     }
 
     public function reconcileDistribution(Request $request): JsonResponse
@@ -79,9 +79,9 @@ class CoReconciliationController extends Controller
         );
 
         if ($run === null) {
-            return $this->successResponse(null, 'No cross-company postings found — reconciliation not required');
+            return $this->success(null, 'No cross-company postings found — reconciliation not required');
         }
 
-        return $this->successResponse($run->load('entries'), 'CO reconciliation entries posted', 201);
+        return $this->success($run->load('entries'), 'CO reconciliation entries posted', 201);
     }
 }

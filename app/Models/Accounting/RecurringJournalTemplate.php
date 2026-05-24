@@ -9,12 +9,14 @@ use App\Models\Concerns\HasUuid;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class RecurringJournalTemplate extends Model
 {
+    use HasFactory;
     use HasUuid;
     use BelongsToOrganization;
     use SoftDeletes;
@@ -94,7 +96,7 @@ class RecurringJournalTemplate extends Model
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true)
-            ->where('next_run_date', '<=', now()->toDateString());
+            ->whereDate('next_run_date', '<=', now()->toDateString());
     }
 
     /**

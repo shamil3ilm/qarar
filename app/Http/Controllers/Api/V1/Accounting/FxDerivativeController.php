@@ -26,7 +26,7 @@ class FxDerivativeController extends Controller
             ->orderByDesc('trade_date')
             ->paginate((int) $request->get('per_page', 20));
 
-        return $this->paginatedResponse($forwards, 'FX forwards retrieved');
+        return $this->paginated($forwards);
     }
 
     /** POST /fx-forwards */
@@ -52,16 +52,13 @@ class FxDerivativeController extends Controller
             createdBy:      $request->user()->id,
         );
 
-        return $this->successResponse($forward, 'FX forward booked', 201);
+        return $this->success($forward, 'FX forward booked', 201);
     }
 
     /** GET /fx-forwards/{forward} */
     public function show(FxForward $fxForward): JsonResponse
     {
-        return $this->successResponse(
-            $fxForward->load(['hedgeRelation', 'valuations']),
-            'FX forward retrieved',
-        );
+        return $this->success($fxForward->load(['hedgeRelation', 'valuations']));
     }
 
     /** POST /fx-forwards/{forward}/designate-hedge */
@@ -78,7 +75,7 @@ class FxDerivativeController extends Controller
 
         $relation = $this->service->designateHedge($fxForward, $data);
 
-        return $this->successResponse($relation, 'Hedge relationship designated', 201);
+        return $this->success($relation, 'Hedge relationship designated', 201);
     }
 
     /** POST /fx-forwards/{forward}/dedesignate-hedge */
@@ -94,7 +91,7 @@ class FxDerivativeController extends Controller
 
         $relation = $this->service->dedesignateHedge($relation, $data['dedesignation_date']);
 
-        return $this->successResponse($relation, 'Hedge relationship de-designated');
+        return $this->success($relation, 'Hedge relationship de-designated');
     }
 
     /** POST /fx-forwards/{forward}/valuate */
@@ -111,7 +108,7 @@ class FxDerivativeController extends Controller
             spotRate:       (float) $data['spot_rate'],
         );
 
-        return $this->successResponse($valuation, 'MTM valuation recorded', 201);
+        return $this->success($valuation, 'MTM valuation recorded', 201);
     }
 
     /** POST /fx-forwards/{forward}/settle */
@@ -128,6 +125,6 @@ class FxDerivativeController extends Controller
             settlementDate:  Carbon::parse($data['settlement_date']),
         );
 
-        return $this->successResponse($forward, 'FX forward settled');
+        return $this->success($forward, 'FX forward settled');
     }
 }

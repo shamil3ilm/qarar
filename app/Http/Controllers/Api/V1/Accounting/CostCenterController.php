@@ -402,7 +402,7 @@ class CostCenterController extends Controller
 
         $tree = $this->buildCostCenterTree($roots, $orgId);
 
-        return $this->successResponse($tree, 'Cost center standard hierarchy retrieved');
+        return $this->success($tree, 'Cost center standard hierarchy retrieved');
     }
 
     private function buildCostCenterTree(\Illuminate\Database\Eloquent\Collection $nodes, int $orgId): array

@@ -27,10 +27,12 @@
 
                     <!-- Header -->
                     <tr>
-                        <td style="background:#1e293b;padding:24px 32px;border-radius:8px 8px 0 0;">
-                            <p style="margin:0;font-size:22px;font-weight:bold;color:#ffffff;letter-spacing:0.5px;">
+                        <td style="background:#1e293b;padding:20px 32px;border-radius:8px 8px 0 0;">
+                            <img src="{{ asset('images/masaar-logo.svg') }}" height="40" width="40" alt="{{ config('app.name') }}"
+                                 style="display:inline-block;vertical-align:middle;border:0;">
+                            <span style="display:inline-block;vertical-align:middle;margin-left:12px;font-size:20px;font-weight:bold;color:#ffffff;letter-spacing:0.5px;">
                                 {{ config('app.name') }}
-                            </p>
+                            </span>
                         </td>
                     </tr>
 

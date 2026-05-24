@@ -44,7 +44,7 @@ class BankGuaranteeService
      */
     public function create(array $data): BankGuarantee
     {
-        return DB::transaction(static fn () => BankGuarantee::create($data));
+        return DB::transaction(static fn () => BankGuarantee::create($data)->fresh());
     }
 
     /**

@@ -51,12 +51,12 @@ When a gap is resolved, change its status to `done` and add the PR/commit refere
 |---|-----|---------------|--------|----------|-------|
 | FI-01 | Bank statement import (MT940 / CAMT.053 / BAI2) | SAP FF.5 / FEBP | missing | P1 | Banks in GCC/India deliver electronic statements. Manual upload or SFTP polling needed. |
 | FI-02 | SEPA mandate management (direct debit) | SAP FSEPA_M | partial | P2 | `DirectDebitCollection` model exists; mandate lifecycle (active, cancelled, revoked) and SEPA XML pain.008 generation are missing. |
-| FI-03 | Payment medium formats (SEPA pain.001, SWIFT MT101, Saudi ACH/SARIE, India NEFT/RTGS) | SAP PMW | missing | P1 | Payment files exist but format adapters per country are absent. Saudi SARIE and India NEFT/RTGS are P1 for live payments. |
+| FI-03 | Payment medium formats (SEPA pain.001, SWIFT MT101, Saudi ACH/SARIE, India NEFT/RTGS) | SAP PMW | done | P1 | `PaymentFormatService::generateSarie()` (ISO 20022 pain.001.001.09 + SARIE local instrument), `generateNeft()`, `generateRtgs()` added. `generate()` dispatch updated. 16 tests. |
 | FI-04 | Document splitting (segment / profit-center real-time) | SAP FAGL_SPLIT (NewGL) | missing | P2 | Needed for segment reporting (IFRS 8) and profit-center P&L. Journal entries post at header level today. |
 | FI-05 | Open item clearing automation (automatic matching rules) | SAP F.13 / F-32 | partial | P2 | Payment allocation exists; automatic matching by amount + reference + date is missing. |
-| FI-06 | Zakat calculation and filing (Saudi Arabia) | SAP ZAKAT module | missing | P1 | Religious obligatory tax on Saudi companies. Different from VAT. Needs zakat base calculation, GAZT integration, and filing. |
+| FI-06 | Zakat calculation and filing (Saudi Arabia) | SAP ZAKAT module | done | P1 | `ZakatAssessment` model + migration, `ZakatCalculationService` with `calculateBase()` (2.5%, Saudi ownership %, non-Zakatable deductions), `createAssessment()`, `submitAssessment()`, `recordPayment()`. 16 tests. |
 | FI-07 | Corporate Income Tax (CIT) provisions and filing | SAP TE-SL | missing | P2 | UAE introduced 9% CIT in 2023. Saudi has 20% CIT on foreign entities. Deferred tax, current tax provision, and filing needed. |
-| FI-08 | Withholding Tax (WHT) on cross-border vendor payments (GCC) | SAP FI-AP-WHT | partial | P1 | TDS exists for India only. Saudi 15% WHT on cross-border service payments (GAZT) is not implemented. |
+| FI-08 | Withholding Tax (WHT) on cross-border vendor payments (GCC) | SAP FI-AP-WHT | done | P1 | `GccCrossBorderWhtSeeder` seeds 6 codes (SA 15%, AE 0%, OM 10%, KW 5%, BH 0%, QA 5%). `GccWithholdingTaxService::resolveCode()` + `applyIfCrossBorder()` + `isCrossBorder()`. 17 tests. |
 | FI-09 | Extended dunning with legal escalation steps | SAP F150 | partial | P2 | Dunning model exists; legal escalation, court notice templates, and statutory interest calculation missing. |
 | FI-10 | Financial close checklist + period-end task automation | SAP Financial Closing Cockpit | partial | P2 | `FinancialCloseCockpit` model exists but automated task scheduling, dependency chains, and status dashboard are incomplete. |
 | FI-11 | Accrual engine (rule-based recurring accruals) | SAP ACE (FBS1/FBS2) | partial | P2 | Accrual models exist but rule-based monthly auto-accrual scheduling and reversal engine missing. |
@@ -138,7 +138,7 @@ When a gap is resolved, change its status to `done` and add the PR/commit refere
 
 | # | Gap | SAP Equivalent | Status | Priority | Notes |
 |---|-----|---------------|--------|----------|-------|
-| PP-01 | Planned Independent Requirements (PIR) management | SAP MD61 | missing | P1 | Without PIRs, MRP cannot run in Make-to-Stock mode. Required for any demand-driven manufacturing customer. |
+| PP-01 | Planned Independent Requirements (PIR) management | SAP MD61 | done | P1 | `PlannedIndependentRequirement` model + migration + `SOURCE_PIR` in `MrpDemandItem`; `collectDemand()` in `MrpService` consumes active PIR open qty. 12 tests. |
 | PP-02 | MPS (Master Production Schedule) | SAP MP30 | missing | P2 | High-level production schedule for key items before MRP explosion. |
 | PP-03 | Production order confirmation with time ticket (CATS integration) | SAP CO11N | partial | P2 | Work order operations exist; labor confirmation with actual time capture and automatic time wage type generation incomplete. |
 | PP-04 | OEE (Overall Equipment Effectiveness) tracking | SAP ME OEE | missing | P2 | Equipment utilization, downtime classification, shift reports. Not in SAP standard but expected in modern manufacturing. |
@@ -159,7 +159,7 @@ When a gap is resolved, change its status to `done` and add the PR/commit refere
 | # | Gap | SAP Equivalent | Status | Priority | Notes |
 |---|-----|---------------|--------|----------|-------|
 | QM-01 | QM control key per material/operation (QM in procurement/production auto-trigger) | SAP QM control key | partial | P2 | Inspection lots can be created but automatic triggering by QM control key on material master is missing. |
-| QM-02 | Usage decision (UD) workflow with stock posting (unrestricted / blocked / scrap) | SAP QA11 | partial | P1 | Inspection lots exist; usage decision with automatic stock transfer from inspection to unrestricted/blocked is missing. |
+| QM-02 | Usage decision (UD) workflow with stock posting (unrestricted / blocked / scrap) | SAP QA11 | done | P1 | `UsageDecision` model + migration; `recordUsageDecision()` in `QualityManagementService` posts movements 321/346/551 and auto-creates CAPA on rejection. 13 tests. |
 | QM-03 | GxP electronic batch record (FDA 21 CFR Part 11) | SAP QM-GxP | missing | P3 | Required for pharmaceutical / food manufacturing customers. Digital signatures on quality records with audit trail. |
 | QM-04 | LIMS integration (Laboratory Information Management System) | SAP QM-LIMS | missing | P3 | External lab result import via interface. Common in chemical/food industries. |
 | QM-05 | Complaint processing (customer → supplier) linkage | SAP QM notif. chain | partial | P2 | Complaints and CAPA exist but customer complaint → supplier corrective action chaining missing. |
@@ -315,15 +315,15 @@ This is the most critical section for Masaar's GCC & India market positioning.
 |---|-----|--------|----------|-------|
 | ZATCA-01 | ZATCA Phase 2 clearance-based e-invoicing (cryptographic stamp + UUID) | partial | P1 | CompliPay gateway handles this; verify all invoice types covered: standard (B2B clearance), simplified (B2C reporting), credit/debit notes. |
 | ZATCA-02 | Fatoora portal onboarding (CCSID/PCSID certificate provisioning) | partial | P1 | Compliance onboarding endpoint exists; automated certificate renewal and rotation missing. |
-| ZATCA-03 | Zakat filing and base calculation | missing | P1 | See FI-06. Separate from VAT but managed by ZATCA. |
+| ZATCA-03 | Zakat filing and base calculation | done | P1 | Implemented via FI-06 — `ZakatCalculationService` + `ZakatAssessment`. `submitAssessment()` records GAZT reference and filed_at date. |
 | ZATCA-04 | ZATCA real estate VAT (5% on commercial, 15% on residential) | partial | P2 | Tax determination rules exist; real-estate-specific rate overrides and partial exemption calculation missing. |
 
 ### UAE (FTA — Federal Tax Authority)
 
 | # | Gap | Status | Priority | Notes |
 |---|-----|--------|----------|-------|
-| FTA-01 | FTA e-invoicing implementation (Phase 1 and Phase 2) | flag-only | P1 | Feature flag `compliance.fta` exists but zero code. Needs: FTA API adapter, UBL 2.1 invoice format, QR code to FTA spec, webhook handling. |
-| FTA-02 | UAE Corporate Tax (CIT) 9% filing (effective 2023) | missing | P1 | Tax registration, taxable income computation, transfer pricing documentation, and EmaraTax portal filing. |
+| FTA-01 | FTA e-invoicing implementation (Phase 1 and Phase 2) | done | P1 | `FtaUblBuilder` (UBL 2.1 + TLV QR) + `FtaEInvoiceService` + `fta_einvoice_submissions` table. 21 tests pass. |
+| FTA-02 | UAE Corporate Tax (CIT) 9% filing (effective 2023) | done | P1 | `UaeCorporateTaxService` (0%/9% threshold, SBR) + `uae_cit_assessments` table + EmaraTax submission workflow. 20 tests pass. |
 | FTA-03 | UAE VAT return (VAT 201 form) filing and reconciliation | partial | P2 | VAT return model exists; reconciliation with GL balance, auto-populate from transactions, and EmaraTax API submission missing. |
 | FTA-04 | UAE Excise Tax (tobacco, energy drinks, carbonated drinks) | missing | P2 | Different from VAT. EmaraTax excise return filing. |
 | FTA-05 | Transfer Pricing documentation (UAE / Saudi MNE rules) | missing | P2 | Master file / local file / Country-by-Country Report (CbCR) requirements for large multinationals. |
@@ -332,7 +332,7 @@ This is the most critical section for Masaar's GCC & India market positioning.
 
 | # | Gap | Status | Priority | Notes |
 |---|-----|--------|----------|-------|
-| QA-01 | Qatar e-invoicing framework integration | missing | P1 | Qatar GTA announced mandatory e-invoicing. Needs dedicated service similar to ZATCA. |
+| QA-01 | Qatar e-invoicing framework integration | done | P1 | `QatarGtaEInvoiceService` (UBL 2.1 + TLV QR, QAR, QatarTRN) + `qatar_gta_submissions` table. 16 tests pass. |
 | QA-02 | Qatar QSS (Qatar Social Security) contributions | missing | P1 | Social insurance for Qatari nationals; distinct from GOSI. |
 | QA-03 | Qatar Income Tax (QIT) filing | missing | P2 | 10% corporate income tax for non-Qatari entities. |
 
@@ -340,7 +340,7 @@ This is the most critical section for Masaar's GCC & India market positioning.
 
 | # | Gap | Status | Priority | Notes |
 |---|-----|--------|----------|-------|
-| BH-01 | Bahrain VAT e-invoicing and return filing (NBR portal) | missing | P1 | Bahrain 10% VAT. NBR return API or CSV format required. |
+| BH-01 | Bahrain VAT e-invoicing and return filing (NBR portal) | done | P1 | `BahrainVatReturnService` (10% VAT, 8-box NBR form, CSV export, quarterly/monthly) + `bahrain_vat_returns` table. 20 tests pass. |
 | BH-02 | Bahrain SIO social insurance file generation | missing | P1 | See HCM-07. |
 
 ### Kuwait (MoF)
@@ -362,10 +362,10 @@ This is the most critical section for Masaar's GCC & India market positioning.
 
 | # | Gap | Status | Priority | Notes |
 |---|-----|--------|----------|-------|
-| IN-01 | India e-invoice XML (IRP portal, IRN generation) | missing | P1 | Mandatory above ₹5 Cr turnover. GSTN IRP API integration for Invoice Reference Number (IRN) and QR code generation. Different from e-way bill. |
+| IN-01 | India e-invoice XML (IRP portal, IRN generation) | done | P1 | `IndiaIrnBuilder` (NIC schema v1.1, IRN=SHA-256 hash, QR base64-JSON) + `IndiaIrpEInvoiceService` + `india_einvoice_submissions` table. 22 tests pass. |
 | IN-02 | EPF/ESI/PT payroll compliance | done | P1 | See HCM-09 — same gap. TDS implemented; EPF (12%), ESI (3.25%), Professional Tax (state-wise) deductions, challans, and ECR file missing. |
-| IN-03 | India TDS 194Q (buyer deducts TDS on purchase) | partial | P2 | TDS on sale/purchase of goods above ₹50 lakh. New section 194Q vs 206C(1H). |
-| IN-04 | GSTR-9 (annual return) and GSTR-9C (reconciliation) | missing | P2 | Annual GST returns requiring reconciliation with audited financials. |
+| IN-03 | India TDS 194Q (buyer deducts TDS on purchase) | done | P2 | `Tds194QService` (₹50L FY threshold, 0.1%/5% rates, 206C(1H) exemption, FY Q tracking) + migration seeding 194Q section. 16 tests pass. |
+| IN-04 | GSTR-9 (annual return) and GSTR-9C (reconciliation) | done | P2 | `Gstr9ReturnService` (Tables 4/6/7/9, ITC setoff, GSTR-1/3B aggregation, ARN filing) + `gstr9_returns` table. 13 tests pass. |
 | IN-05 | India XBRL filing (MCA21 for large companies) | missing | P3 | Ministry of Corporate Affairs XBRL for balance sheet, P&L filing. Different taxonomy from GAZT. |
 
 ---
@@ -528,27 +528,27 @@ Implemented sequentially. Check each box when done. Update the gap entry status 
 
 ### Wave 2 — Quality & Manufacturing Gaps (QM/PP P1)
 
-- [ ] **QM-02** Usage decision workflow with stock type transfer (unrestricted / blocked / scrap)
-- [ ] **PP-01** Planned Independent Requirements (PIR) — models + MRP integration
+- [x] **QM-02** Usage decision workflow with stock type transfer (unrestricted / blocked / scrap)
+- [x] **PP-01** Planned Independent Requirements (PIR) — models + MRP integration
 
 ### Wave 3 — Financial Compliance (FI P1)
 
-- [ ] **FI-08** GCC Withholding Tax on cross-border vendor payments (Saudi 15%, UAE 0%, Oman 10%)
-- [ ] **FI-06 / ZATCA-03** Zakat calculation engine + GAZT filing draft
-- [ ] **FI-03** Payment medium format adapters (Saudi SARIE, India NEFT/RTGS)
+- [x] **FI-08** GCC Withholding Tax on cross-border vendor payments (Saudi 15%, UAE 0%, Oman 10%)
+- [x] **FI-06 / ZATCA-03** Zakat calculation engine + GAZT filing draft
+- [x] **FI-03** Payment medium format adapters (Saudi SARIE, India NEFT/RTGS)
 
 ### Wave 4 — UAE & Qatar E-Invoicing (FTA / QA P1)
 
-- [ ] **FTA-01** UAE FTA e-invoicing (UBL 2.1 adapter, FTA QR, webhook)
-- [ ] **FTA-02** UAE CIT 9% — tax base computation + EmaraTax filing draft
-- [ ] **QA-01** Qatar GTA e-invoicing framework
-- [ ] **BH-01** Bahrain VAT return (NBR format)
+- [x] **FTA-01** UAE FTA e-invoicing (UBL 2.1 adapter, FTA QR, webhook)
+- [x] **FTA-02** UAE CIT 9% — tax base computation + EmaraTax filing draft
+- [x] **QA-01** Qatar GTA e-invoicing framework
+- [x] **BH-01** Bahrain VAT return (NBR format)
 
 ### Wave 5 — India Tax Compliance (IN P1)
 
-- [ ] **IN-01** India e-invoice IRP/IRN — GSTN API adapter + QR code
-- [ ] **IN-03** TDS 194Q on purchases
-- [ ] **IN-04** GSTR-9 annual return
+- [x] **IN-01** India e-invoice IRP/IRN — GSTN API adapter + QR code
+- [x] **IN-03** TDS 194Q on purchases
+- [x] **IN-04** GSTR-9 annual return
 
 ### Wave 6 — Core FI/CO P2 (High Value)
 

@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Accounting;
 use App\Http\Controllers\Controller;
 use App\Models\Accounting\CarryForwardRun;
 use App\Services\Accounting\CarryForwardService;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -37,6 +38,8 @@ class CarryForwardController extends Controller
             return $this->created($run, 'Carry forward executed successfully.');
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage(), 'CARRY_FORWARD_FAILED', 422);
+        } catch (ModelNotFoundException $e) {
+            return $this->error('Fiscal year not found.', 'NOT_FOUND', 404);
         } catch (\Throwable $e) {
             return $this->error('Carry forward failed: ' . $e->getMessage(), 'CARRY_FORWARD_ERROR', 500);
         }

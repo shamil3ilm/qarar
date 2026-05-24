@@ -10,6 +10,7 @@ use App\Models\Manufacturing\MrpCapacityRequirement;
 use App\Models\Manufacturing\MrpDemandItem;
 use App\Models\Manufacturing\MrpPlannedOrder;
 use App\Models\Manufacturing\MrpRun;
+use App\Models\Manufacturing\PlannedIndependentRequirement;
 use App\Models\Manufacturing\WorkCenter;
 use App\Models\Manufacturing\WorkCenterCapacity;
 use App\Models\Inventory\Product;
@@ -342,6 +343,34 @@ class MrpService
             $demand->put($sl->product_id, ($demand->get($sl->product_id, 0.0) + $gapFloat));
         }
         }); // end chunkById for safety stock
+
+        // 4) Planned Independent Requirements (PIR / MD61) — Make-to-Stock demand
+        PlannedIndependentRequirement::withoutGlobalScope('organization')
+            ->where('organization_id', $orgId)
+            ->where('is_active', true)
+            ->where('requirement_date', '>=', now()->toDateString())
+            ->where('requirement_date', '<=', $horizonEnd)
+            ->whereNull('deleted_at')
+            ->chunkById(200, function ($pirs) use ($run, &$demand) {
+                foreach ($pirs as $pir) {
+                    $qty = $pir->openQuantity();
+
+                    if ($qty <= 0) {
+                        continue;
+                    }
+
+                    MrpDemandItem::create([
+                        'mrp_run_id'        => $run->id,
+                        'product_id'        => $pir->product_id,
+                        'source_type'       => MrpDemandItem::SOURCE_PIR,
+                        'source_id'         => $pir->id,
+                        'required_date'     => $pir->requirement_date->toDateString(),
+                        'required_quantity' => $qty,
+                    ]);
+
+                    $demand->put($pir->product_id, ($demand->get($pir->product_id, 0.0) + $qty));
+                }
+            });
 
         return $demand;
     }

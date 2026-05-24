@@ -116,7 +116,7 @@ class ConsolidationController extends Controller
         }
 
         if ($group->periods()->where('status', ConsolidationPeriod::STATUS_COMPLETED)->exists()) {
-            return $this->error('Cannot delete a group that has completed periods.', 422);
+            return $this->error('Cannot delete a group that has completed periods.', 'DELETE_BLOCKED', 422);
         }
 
         $group->delete();
@@ -244,7 +244,7 @@ class ConsolidationController extends Controller
         }
 
         if ($period->isCompleted()) {
-            return $this->error('Cannot collect balances for a completed period.', 422);
+            return $this->error('Cannot collect balances for a completed period.', 'PERIOD_COMPLETED', 422);
         }
 
         $this->consolidationService->collectEntityBalances($period, auth()->id());
@@ -333,7 +333,7 @@ class ConsolidationController extends Controller
         }
 
         if ($period->isCompleted()) {
-            return $this->error('Cannot generate eliminations for a completed period.', 422);
+            return $this->error('Cannot generate eliminations for a completed period.', 'PERIOD_COMPLETED', 422);
         }
 
         try {
@@ -378,7 +378,7 @@ class ConsolidationController extends Controller
         }
 
         if ($period->isCompleted()) {
-            return $this->error('Cannot add elimination entries to a completed period.', 422);
+            return $this->error('Cannot add elimination entries to a completed period.', 'PERIOD_COMPLETED', 422);
         }
 
         $validated = $request->validate([

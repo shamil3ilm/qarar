@@ -175,7 +175,7 @@ class DocumentSplittingService
         }
 
         foreach ($otherLines as $line) {
-            foreach ($weights as $centerId => $ratio) {
+            foreach ($weights as $dimensionId => $ratio) {
                 $debit  = round((float) $line->debit * $ratio, 4);
                 $credit = round((float) $line->credit * $ratio, 4);
 
@@ -186,16 +186,17 @@ class DocumentSplittingService
                 $splitData = [
                     'journal_entry_id' => $entry->id,
                     'original_line_id' => $line->id,
+                    'split_method'     => $rule->split_method,
                     'debit_amount'     => $debit,
                     'credit_amount'    => $credit,
                     'currency_code'    => $entry->currency_code ?? 'SAR',
                 ];
 
-                if ($rule->split_method === 'profit_center') {
-                    $splitData['profit_center_id'] = $centerId;
-                } else {
-                    $splitData['cost_center_id'] = $centerId;
-                }
+                $splitData = match ($rule->split_method) {
+                    'profit_center' => array_merge($splitData, ['profit_center_id' => $dimensionId]),
+                    'segment'       => array_merge($splitData, ['segment_id' => (string) $dimensionId]),
+                    default         => array_merge($splitData, ['cost_center_id' => $dimensionId]),
+                };
 
                 JournalEntrySplitItem::create($splitData);
             }
@@ -212,16 +213,18 @@ class DocumentSplittingService
         $grandTotal = 0.0;
 
         foreach ($baseLines as $line) {
-            $centerId = $method === 'profit_center'
-                ? $line->profit_center_id
-                : $line->cost_center_id;
+            $dimensionId = match ($method) {
+                'profit_center' => $line->profit_center_id,
+                'segment'       => $line->segment_id,
+                default         => $line->cost_center_id,
+            };
 
-            if ($centerId === null) {
+            if ($dimensionId === null) {
                 continue;
             }
 
             $amount = (float) $line->debit + (float) $line->credit;
-            $totals[$centerId] = ($totals[$centerId] ?? 0.0) + $amount;
+            $totals[$dimensionId] = ($totals[$dimensionId] ?? 0.0) + $amount;
             $grandTotal += $amount;
         }
 

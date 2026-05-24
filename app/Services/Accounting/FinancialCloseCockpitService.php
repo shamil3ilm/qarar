@@ -187,6 +187,78 @@ class FinancialCloseCockpitService
     }
 
     /**
+     * Schedule a close period with automatic due dates per task.
+     *
+     * Tasks are given due dates counted back from the period's due_date, spaced by their
+     * estimated_duration_hours or sort_order position. Tasks later in sort_order get later dates.
+     */
+    public function schedulePeriod(array $data): FinancialClosePeriod
+    {
+        return DB::transaction(function () use ($data): FinancialClosePeriod {
+            $period = $this->createPeriod($data);
+
+            $dueDate = isset($data['due_date'])
+                ? \Illuminate\Support\Carbon::parse($data['due_date'])
+                : now()->endOfMonth();
+
+            $tasks      = $period->tasks()->orderBy('sort_order')->get();
+            $taskCount  = $tasks->count();
+
+            foreach ($tasks as $i => $task) {
+                $daysBack = $taskCount - $i - 1;
+                $taskDue  = $dueDate->copy()->subDays($daysBack);
+
+                $task->update(['due_date' => $taskDue->toDateString()]);
+            }
+
+            return $period->load('tasks');
+        });
+    }
+
+    /**
+     * After completing or skipping a task, unblock dependent tasks whose
+     * remaining dependencies are all now completed/skipped.
+     *
+     * Marks tasks BLOCKED when a prerequisite was failed/skipped.
+     */
+    public function propagateBlocked(FinancialCloseTask $completedTask): void
+    {
+        $dependents = $completedTask->dependents()->with('dependencies')->get();
+
+        foreach ($dependents as $dependent) {
+            if ($dependent->status !== FinancialCloseTask::STATUS_BLOCKED
+                && $dependent->status !== FinancialCloseTask::STATUS_PENDING) {
+                continue;
+            }
+
+            $allDone = $dependent->dependencies->every(
+                fn ($dep) => in_array($dep->status, [
+                    FinancialCloseTask::STATUS_COMPLETED,
+                    FinancialCloseTask::STATUS_SKIPPED,
+                ], true)
+            );
+
+            if ($allDone && $dependent->status === FinancialCloseTask::STATUS_BLOCKED) {
+                $dependent->update(['status' => FinancialCloseTask::STATUS_PENDING]);
+            }
+        }
+    }
+
+    /**
+     * Block all pending tasks that depend on the given task (e.g. when a critical task fails).
+     */
+    public function blockDependents(FinancialCloseTask $failedTask): void
+    {
+        $dependents = $failedTask->dependents()
+            ->whereIn('status', [FinancialCloseTask::STATUS_PENDING])
+            ->get();
+
+        foreach ($dependents as $dependent) {
+            $dependent->update(['status' => FinancialCloseTask::STATUS_BLOCKED]);
+        }
+    }
+
+    /**
      * Close a financial period (all tasks must be completed or skipped).
      */
     public function closePeriod(FinancialClosePeriod $period, int $userId): void

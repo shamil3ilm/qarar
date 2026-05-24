@@ -17,6 +17,9 @@ class ActivityRate extends Model
         'planned_rate',
         'actual_rate',
         'currency_code',
+        'is_confirmed',
+        'confirmed_at',
+        'confirmed_by',
     ];
 
     protected function casts(): array
@@ -25,7 +28,25 @@ class ActivityRate extends Model
             'planned_rate' => 'decimal:4',
             'actual_rate'  => 'decimal:4',
             'period'       => 'integer',
+            'is_confirmed' => 'boolean',
+            'confirmed_at' => 'datetime',
         ];
+    }
+
+    public function varianceAmount(): float
+    {
+        return round((float) $this->actual_rate - (float) $this->planned_rate, 4);
+    }
+
+    public function variancePercent(): float
+    {
+        $planned = (float) $this->planned_rate;
+
+        if ($planned == 0.0) {
+            return 0.0;
+        }
+
+        return round(($this->varianceAmount() / $planned) * 100, 2);
     }
 
     // ----------------------------------------------------------------

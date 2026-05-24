@@ -32,9 +32,12 @@ class PaymentFormatService
         $items = $run->items()->with('vendor')->get();
 
         return match (strtolower($run->payment_method ?? 'sepa')) {
-            'sepa'       => $this->generateSepaXml($run, $items),
+            'sepa'        => $this->generateSepaXml($run, $items),
             'swift_mt103' => $this->generateSwiftBatch($run, $items),
             'ach', 'nacha' => $this->generateNacha($run, $items),
+            'sarie'       => $this->generateSarie($run, $items),
+            'neft'        => $this->generateNeft($run, $items),
+            'rtgs'        => $this->generateRtgs($run, $items),
             default       => $this->generateSepaXml($run, $items),
         };
     }
@@ -239,6 +242,191 @@ class PaymentFormatService
             . str_pad('', 39);
 
         return implode(PHP_EOL, [$fileHeader, $batchHeader, rtrim($batchLines), $batchControl, $fileControl]) . PHP_EOL;
+    }
+
+    // -------------------------------------------------------------------------
+    // SARIE — Saudi Arabia Real-Time Interbank Express (ISO 20022 pain.001 localisation)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Generate a SARIE credit transfer file.
+     *
+     * SARIE (Saudi Payments) uses ISO 20022 pain.001.001.09 with Saudi-specific
+     * extensions: local instrument "SARIE", SAR-denominated, Saudi IBAN (SA…).
+     */
+    public function generateSarie(PaymentRun $run, Collection $items): string
+    {
+        $msgId      = 'SARIE-' . $run->id . '-' . now()->format('YmdHis');
+        $creationDt = now()->format('Y-m-d\TH:i:s');
+        $execDate   = Carbon::parse($run->payment_date)->format('Y-m-d');
+        $totalItems = $items->count();
+        $totalAmount = $items->sum(fn ($i) => (float) $i->amount);
+        $debtorName  = $this->xmlEscape($run->organization->name ?? 'Company');
+        $debtorIban  = $this->xmlEscape($run->bank_account_iban ?? '');
+        $debtorBic   = $this->xmlEscape($run->bank_bic ?? 'RJHISARI');
+
+        $txBlocks = '';
+        foreach ($items as $item) {
+            $endToEnd    = 'SARIE-E2E-' . $item->id;
+            $amount      = number_format((float) $item->amount, 2, '.', '');
+            $credName    = $this->xmlEscape($item->vendor_name ?? $item->vendor?->name ?? 'Beneficiary');
+            $credIban    = $this->xmlEscape($item->bank_iban ?? '');
+            $credBic     = $this->xmlEscape($item->bank_bic ?? '');
+            $remittance  = $this->xmlEscape($item->reference ?? 'Payment ' . $item->id);
+
+            $txBlocks .= '      <CdtTrfTxInf>' . PHP_EOL
+                . "        <PmtId><EndToEndId>{$endToEnd}</EndToEndId></PmtId>" . PHP_EOL
+                . '        <PmtTpInf><LclInstrm><Cd>SARIE</Cd></LclInstrm></PmtTpInf>' . PHP_EOL
+                . "        <Amt><InstdAmt Ccy=\"SAR\">{$amount}</InstdAmt></Amt>" . PHP_EOL
+                . "        <CdtrAgt><FinInstnId><BICFI>{$credBic}</BICFI></FinInstnId></CdtrAgt>" . PHP_EOL
+                . "        <Cdtr><Nm>{$credName}</Nm></Cdtr>" . PHP_EOL
+                . "        <CdtrAcct><Id><IBAN>{$credIban}</IBAN></Id></CdtrAcct>" . PHP_EOL
+                . "        <RmtInf><Ustrd>{$remittance}</Ustrd></RmtInf>" . PHP_EOL
+                . '      </CdtTrfTxInf>' . PHP_EOL;
+        }
+
+        return '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL
+            . '<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09">' . PHP_EOL
+            . '  <CstmrCdtTrfInitn>' . PHP_EOL
+            . '    <GrpHdr>' . PHP_EOL
+            . "      <MsgId>{$msgId}</MsgId>" . PHP_EOL
+            . "      <CreDtTm>{$creationDt}</CreDtTm>" . PHP_EOL
+            . "      <NbOfTxs>{$totalItems}</NbOfTxs>" . PHP_EOL
+            . '      <CtrlSum>' . number_format($totalAmount, 2, '.', '') . '</CtrlSum>' . PHP_EOL
+            . "      <InitgPty><Nm>{$debtorName}</Nm></InitgPty>" . PHP_EOL
+            . '    </GrpHdr>' . PHP_EOL
+            . '    <PmtInf>' . PHP_EOL
+            . "      <PmtInfId>PMT-SARIE-{$run->id}</PmtInfId>" . PHP_EOL
+            . '      <PmtMtd>TRF</PmtMtd>' . PHP_EOL
+            . '      <PmtTpInf><SvcLvl><Cd>NURG</Cd></SvcLvl><LclInstrm><Cd>SARIE</Cd></LclInstrm></PmtTpInf>' . PHP_EOL
+            . "      <ReqdExctnDt><Dt>{$execDate}</Dt></ReqdExctnDt>" . PHP_EOL
+            . "      <Dbtr><Nm>{$debtorName}</Nm></Dbtr>" . PHP_EOL
+            . "      <DbtrAcct><Id><IBAN>{$debtorIban}</IBAN></Id></DbtrAcct>" . PHP_EOL
+            . "      <DbtrAgt><FinInstnId><BICFI>{$debtorBic}</BICFI></FinInstnId></DbtrAgt>" . PHP_EOL
+            . $txBlocks
+            . '    </PmtInf>' . PHP_EOL
+            . '  </CstmrCdtTrfInitn>' . PHP_EOL
+            . '</Document>' . PHP_EOL;
+    }
+
+    // -------------------------------------------------------------------------
+    // India NEFT — National Electronic Funds Transfer (RBI format)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Generate an India NEFT batch file.
+     *
+     * Format: pipe-delimited, one record per transaction.
+     * Fields: TRANSACTION_TYPE|SENDER_IFSC|SENDER_ACCOUNT|AMOUNT|BENEFICIARY_IFSC|BENEFICIARY_ACCOUNT|BENEFICIARY_NAME|PAYMENT_REF
+     */
+    public function generateNeft(PaymentRun $run, Collection $items): string
+    {
+        $lines = [];
+        $batchRef = 'NEFT-' . $run->id . '-' . now()->format('YmdHis');
+
+        // Header record
+        $lines[] = implode('|', [
+            'HDR',
+            $batchRef,
+            now()->format('d/m/Y'),
+            $items->count(),
+            number_format((float) $items->sum(fn ($i) => (float) $i->amount), 2, '.', ''),
+            'NEFT',
+            $run->bank_ifsc ?? 'SBIN0000001',
+        ]);
+
+        foreach ($items as $item) {
+            $amount    = number_format((float) $item->amount, 2, '.', '');
+            $ifsc      = $item->bank_ifsc ?? ($item->bank_bic ?? 'SBIN0000001');
+            $acctNo    = $item->bank_account_number ?? $item->bank_iban ?? '0000000000';
+            $benefName = substr($item->vendor_name ?? $item->vendor?->name ?? 'BENEFICIARY', 0, 100);
+            $ref       = substr($item->reference ?? 'PMT-' . $item->id, 0, 20);
+
+            $lines[] = implode('|', [
+                'DTL',
+                'NEFT',
+                $run->bank_ifsc ?? 'SBIN0000001',
+                $run->bank_account_number ?? '0000000000',
+                $amount,
+                $ifsc,
+                $acctNo,
+                $benefName,
+                $ref,
+                now()->format('d/m/Y'),
+                strtoupper($run->currency ?? 'INR'),
+            ]);
+        }
+
+        // Trailer record
+        $lines[] = implode('|', [
+            'TRL',
+            $batchRef,
+            $items->count(),
+            number_format((float) $items->sum(fn ($i) => (float) $i->amount), 2, '.', ''),
+        ]);
+
+        return implode(PHP_EOL, $lines) . PHP_EOL;
+    }
+
+    // -------------------------------------------------------------------------
+    // India RTGS — Real-Time Gross Settlement (RBI format)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Generate an India RTGS instruction file.
+     *
+     * RTGS uses ISO 20022 pacs.009 / camt.054 internally in the RBI system.
+     * This outputs the customer-facing instruction format (pipe-delimited)
+     * compatible with corporate banking portals.
+     * Minimum transaction amount: ₹2,00,000.
+     */
+    public function generateRtgs(PaymentRun $run, Collection $items): string
+    {
+        $lines = [];
+        $batchRef = 'RTGS-' . $run->id . '-' . now()->format('YmdHis');
+
+        $lines[] = implode('|', [
+            'HDR',
+            $batchRef,
+            now()->format('d/m/Y H:i:s'),
+            $items->count(),
+            number_format((float) $items->sum(fn ($i) => (float) $i->amount), 2, '.', ''),
+            'RTGS',
+            $run->bank_ifsc ?? 'SBIN0000001',
+        ]);
+
+        foreach ($items as $item) {
+            $amount    = number_format((float) $item->amount, 2, '.', '');
+            $ifsc      = $item->bank_ifsc ?? ($item->bank_bic ?? 'SBIN0000001');
+            $acctNo    = $item->bank_account_number ?? $item->bank_iban ?? '0000000000';
+            $benefName = substr($item->vendor_name ?? $item->vendor?->name ?? 'BENEFICIARY', 0, 100);
+            $ref       = substr($item->reference ?? 'PMT-' . $item->id, 0, 35);
+            $acctType  = $item->bank_account_type ?? 'CA'; // CA=Current, SB=Savings
+
+            $lines[] = implode('|', [
+                'DTL',
+                'RTGS',
+                $run->bank_ifsc ?? 'SBIN0000001',
+                $run->bank_account_number ?? '0000000000',
+                $amount,
+                $ifsc,
+                $acctNo,
+                $acctType,
+                $benefName,
+                $ref,
+                now()->format('d/m/Y H:i:s'),
+                strtoupper($run->currency ?? 'INR'),
+            ]);
+        }
+
+        $lines[] = implode('|', [
+            'TRL',
+            $batchRef,
+            $items->count(),
+            number_format((float) $items->sum(fn ($i) => (float) $i->amount), 2, '.', ''),
+        ]);
+
+        return implode(PHP_EOL, $lines) . PHP_EOL;
     }
 
     // -------------------------------------------------------------------------

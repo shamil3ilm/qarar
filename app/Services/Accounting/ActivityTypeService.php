@@ -98,4 +98,85 @@ class ActivityTypeService
             return $rate->load(['activityType:id,code,name', 'costCenter:id,code,name', 'fiscalYear:id,name']);
         });
     }
+
+    /**
+     * Confirm the planned rate for a given period, recording the user who confirmed.
+     * Corresponds to SAP KP26 "rate confirmation" workflow.
+     */
+    public function confirmRate(ActivityType $activityType, array $data, int $confirmedByUserId): ActivityRate
+    {
+        return DB::transaction(function () use ($activityType, $data, $confirmedByUserId): ActivityRate {
+            $period = (int) ($data['period'] ?? 1);
+
+            if ($period < 1 || $period > 12) {
+                throw new InvalidArgumentException('Period must be between 1 and 12.');
+            }
+
+            /** @var ActivityRate $rate */
+            $rate = ActivityRate::where('activity_type_id', $activityType->id)
+                ->where('cost_center_id', (int) $data['cost_center_id'])
+                ->where('fiscal_year_id', (int) $data['fiscal_year_id'])
+                ->where('period', $period)
+                ->firstOrFail();
+
+            if ($rate->is_confirmed) {
+                throw new InvalidArgumentException(
+                    "Rate for period {$period} is already confirmed."
+                );
+            }
+
+            $rate->update([
+                'is_confirmed' => true,
+                'confirmed_at' => now(),
+                'confirmed_by' => $confirmedByUserId,
+            ]);
+
+            return $rate->fresh();
+        });
+    }
+
+    /**
+     * Calculate plan vs. actual variance for an activity type across all periods.
+     *
+     * @return array{
+     *   activity_type_id: int,
+     *   fiscal_year_id: int,
+     *   cost_center_id: int,
+     *   periods: list<array{period: int, planned_rate: float, actual_rate: float, variance_amount: float, variance_percent: float}>,
+     *   total_variance: float,
+     * }
+     */
+    public function calculateVariance(ActivityType $activityType, array $data): array
+    {
+        $rates = ActivityRate::where('activity_type_id', $activityType->id)
+            ->where('cost_center_id', (int) $data['cost_center_id'])
+            ->where('fiscal_year_id', (int) $data['fiscal_year_id'])
+            ->orderBy('period')
+            ->get();
+
+        $periods       = [];
+        $totalVariance = 0.0;
+
+        foreach ($rates as $rate) {
+            $variance        = $rate->varianceAmount();
+            $totalVariance  += $variance;
+
+            $periods[] = [
+                'period'           => $rate->period,
+                'planned_rate'     => (float) $rate->planned_rate,
+                'actual_rate'      => (float) $rate->actual_rate,
+                'variance_amount'  => $variance,
+                'variance_percent' => $rate->variancePercent(),
+                'is_confirmed'     => $rate->is_confirmed,
+            ];
+        }
+
+        return [
+            'activity_type_id' => $activityType->id,
+            'fiscal_year_id'   => (int) $data['fiscal_year_id'],
+            'cost_center_id'   => (int) $data['cost_center_id'],
+            'periods'          => $periods,
+            'total_variance'   => round($totalVariance, 4),
+        ];
+    }
 }

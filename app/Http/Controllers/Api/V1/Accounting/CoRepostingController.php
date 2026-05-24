@@ -92,7 +92,7 @@ class CoRepostingController extends Controller
     public function destroy(CoReposting $coReposting): JsonResponse
     {
         if ($coReposting->isReversed()) {
-            return $this->error('Reversed repostings cannot be deleted.', 422);
+            return $this->error('Reversed repostings cannot be deleted.', 'DELETE_BLOCKED', 422);
         }
 
         $coReposting->delete();

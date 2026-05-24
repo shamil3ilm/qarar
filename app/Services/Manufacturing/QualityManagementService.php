@@ -11,6 +11,7 @@ use App\Models\Manufacturing\InspectionResult;
 use App\Models\Manufacturing\QualityNotification;
 use App\Models\Manufacturing\QualityPlan;
 use App\Models\Manufacturing\QualityPlanCharacteristic;
+use App\Models\Manufacturing\UsageDecision;
 use App\Models\Purchase\PurchaseOrder;
 use App\Services\Core\NumberGeneratorService;
 use App\Services\Inventory\StockService;
@@ -254,6 +255,147 @@ class QualityManagementService
             }
 
             return $completedLot;
+        });
+    }
+
+    /**
+     * Record a formal Usage Decision (UD) for an inspection lot.
+     *
+     * The caller specifies how much of the lot quantity goes to each stock type:
+     *   - qty_unrestricted → SAP movement 321 (QI stock → unrestricted)
+     *   - qty_blocked      → SAP movement 346 (QI stock → blocked)
+     *   - qty_scrap        → SAP movement 551 (QI stock → scrap)
+     *
+     * The sum must not exceed the lot quantity. The method posts the corresponding
+     * inventory movements and transitions the lot to accepted/rejected/partial_accept.
+     *
+     * @throws \InvalidArgumentException if the lot is already decided or quantities exceed lot qty.
+     */
+    public function recordUsageDecision(
+        InspectionLot $lot,
+        array $data,
+        int $userId
+    ): UsageDecision {
+        return DB::transaction(function () use ($lot, $data, $userId) {
+            if (!in_array($lot->status, [
+                InspectionLot::STATUS_PENDING,
+                InspectionLot::STATUS_IN_INSPECTION,
+            ], true)) {
+                throw new \InvalidArgumentException(
+                    'Usage decision can only be recorded on a pending or in-inspection lot.'
+                );
+            }
+
+            $qtyUnrestricted = (float) ($data['qty_unrestricted'] ?? 0);
+            $qtyBlocked      = (float) ($data['qty_blocked'] ?? 0);
+            $qtyScrap        = (float) ($data['qty_scrap'] ?? 0);
+            $total           = $qtyUnrestricted + $qtyBlocked + $qtyScrap;
+            $lotQty          = (float) $lot->quantity;
+
+            if ($total > $lotQty + 0.0001) {
+                throw new \InvalidArgumentException(
+                    "Total disposed quantity ({$total}) exceeds lot quantity ({$lotQty})."
+                );
+            }
+
+            // Derive decision code
+            $decisionCode = match (true) {
+                $qtyUnrestricted >= $lotQty - 0.0001 => UsageDecision::DECISION_ACCEPT,
+                ($qtyBlocked + $qtyScrap) >= $lotQty - 0.0001 => UsageDecision::DECISION_REJECT,
+                default => UsageDecision::DECISION_PARTIAL,
+            };
+
+            // Transition lot status
+            $lotStatus = match ($decisionCode) {
+                UsageDecision::DECISION_ACCEPT  => InspectionLot::STATUS_ACCEPTED,
+                UsageDecision::DECISION_REJECT  => InspectionLot::STATUS_REJECTED,
+                default                         => InspectionLot::STATUS_PARTIAL_ACCEPT,
+            };
+
+            $lot->update([
+                'accepted_quantity'  => $qtyUnrestricted,
+                'rejected_quantity'  => $qtyBlocked + $qtyScrap,
+                'inspected_quantity' => $total,
+                'status'             => $lotStatus,
+                'inspection_date'    => now()->toDateString(),
+                'inspected_by'       => $userId,
+            ]);
+
+            $decisionNumber = $this->numberGenerator->generate('UD', '{prefix}-{year}-{number}', $lot->organization_id);
+
+            $decision = UsageDecision::create([
+                'organization_id'    => $lot->organization_id,
+                'inspection_lot_id'  => $lot->id,
+                'decision_number'    => $decisionNumber,
+                'decision_code'      => $decisionCode,
+                'qty_unrestricted'   => $qtyUnrestricted,
+                'qty_blocked'        => $qtyBlocked,
+                'qty_scrap'          => $qtyScrap,
+                'notes'              => $data['notes'] ?? null,
+                'decided_by'         => $userId,
+                'decided_at'         => now(),
+            ]);
+
+            // Post stock movements when linked to a warehouse
+            if ($lot->warehouse_id !== null) {
+                $movements = [
+                    [UsageDecision::MOVEMENT_UNRESTRICTED, 'IN',  $qtyUnrestricted, 'unrestricted'],
+                    [UsageDecision::MOVEMENT_BLOCKED,      'OUT', $qtyBlocked,      'blocked'],
+                    [UsageDecision::MOVEMENT_SCRAP,        'OUT', $qtyScrap,        'scrap'],
+                ];
+
+                foreach ($movements as [$movementType, $direction, $qty, $label]) {
+                    if ($qty <= 0) {
+                        continue;
+                    }
+
+                    try {
+                        $this->stockService->recordMovement(
+                            productId: $lot->product_id,
+                            warehouseId: $lot->warehouse_id,
+                            movementType: $movementType,
+                            direction: $direction,
+                            quantity: $qty,
+                            unitCost: 0,
+                            referenceType: 'usage_decision',
+                            referenceId: $decision->id,
+                            referenceNumber: $decision->decision_number,
+                            notes: "UD {$decision->decision_number} — {$label} qty from lot {$lot->lot_number}",
+                            createdBy: $userId,
+                        );
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning("UD stock posting failed ({$label})", [
+                            'decision_number' => $decision->decision_number,
+                            'error'           => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
+
+            // Auto-create CAPA when blocked or scrap quantity is non-zero
+            if ($qtyBlocked + $qtyScrap > 0) {
+                try {
+                    CapaRecord::create([
+                        'organization_id'   => $lot->organization_id,
+                        'capa_number'       => $this->numberGenerator->generate('CAPA'),
+                        'capa_type'         => 'corrective',
+                        'source_type'       => 'usage_decision',
+                        'source_id'         => $decision->id,
+                        'problem_statement' => "Usage decision {$decision->decision_number}: blocked={$qtyBlocked}, scrap={$qtyScrap} on lot {$lot->lot_number}.",
+                        'priority'          => 'high',
+                        'status'            => 'open',
+                        'owner_id'          => $userId,
+                        'target_close_date' => now()->addDays(30),
+                    ]);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('CAPA auto-creation failed for usage decision', [
+                        'decision_number' => $decision->decision_number,
+                        'error'           => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return $decision->load('inspectionLot', 'decidedBy');
         });
     }
 
