@@ -110,7 +110,7 @@ class InternalOrderController extends Controller
     public function destroy(InternalOrder $internalOrder): JsonResponse
     {
         if (!$internalOrder->isCreated()) {
-            return $this->error('Only orders in created status can be deleted.', 422);
+            return $this->error('Only orders in created status can be deleted.', 'INVALID_STATUS', 422);
         }
 
         $internalOrder->delete();

@@ -29,7 +29,7 @@ class ParallelLedgerController extends Controller
     {
         $ledgers = $this->service->getLedgers($request->user()->organization_id);
 
-        return $this->successResponse($ledgers);
+        return $this->success($ledgers);
     }
 
     public function store(Request $request): JsonResponse
@@ -49,7 +49,7 @@ class ParallelLedgerController extends Controller
             'is_active' => true,
         ]);
 
-        return $this->successResponse($ledger, 'Parallel ledger created', 201);
+        return $this->created($ledger);
     }
 
     public function comparison(Request $request, string $id): JsonResponse
@@ -66,7 +66,7 @@ class ParallelLedgerController extends Controller
             $request->period,
         );
 
-        return $this->successResponse($result);
+        return $this->success($result);
     }
 
     public function postEntry(Request $request, string $id, string $journalEntryId): JsonResponse
@@ -76,6 +76,6 @@ class ParallelLedgerController extends Controller
 
         $this->service->postToLedger($journalEntry, $ledger);
 
-        return $this->successResponse(null, 'Journal entry posted to parallel ledger');
+        return $this->success(null, 'Journal entry posted to parallel ledger');
     }
 }

@@ -36,9 +36,9 @@ return new class extends Migration
             $table->softDeletes();
             $table->timestamps();
 
-            $table->index(['organization_id', 'product_id', 'is_active']);
-            $table->index(['organization_id', 'requirement_date']);
-            $table->index(['organization_id', 'version', 'is_active']);
+            $table->index(['organization_id', 'product_id', 'is_active'], 'pir_org_prod_active_idx');
+            $table->index(['organization_id', 'requirement_date'], 'pir_org_req_date_idx');
+            $table->index(['organization_id', 'version', 'is_active'], 'pir_org_ver_active_idx');
         });
     }
 

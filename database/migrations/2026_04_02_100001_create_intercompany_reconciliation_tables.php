@@ -38,7 +38,7 @@ return new class extends Migration
             $table->timestamp('completed_at')->nullable();
             $table->timestamps();
 
-            $table->index(['organization_id', 'fiscal_year', 'period']);
+            $table->index(['organization_id', 'fiscal_year', 'period'], 'ic_recon_sessions_org_fy_period_idx');
         });
 
         Schema::create('ic_reconciliation_items', function (Blueprint $table) {

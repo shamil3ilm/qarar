@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TransferPriceHistory extends Model
 {
+    protected $table = 'transfer_price_history';
+
     protected $fillable = [
         'transfer_price_id',
         'changed_by',

@@ -123,7 +123,7 @@ class TreasuryController extends Controller
      */
     public function bankPositions(Request $request): JsonResponse
     {
-        $date      = $request->string('date', now()->toDateString());
+        $date      = (string) $request->string('date', now()->toDateString());
         $positions = $this->treasuryService->calculateBankPosition(
             $request->user()->organization_id,
             $date,

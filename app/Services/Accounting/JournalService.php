@@ -75,6 +75,7 @@ class JournalService
      */
     public function createEntry(array $entryData, array $lines): JournalEntry
     {
+        $lines = $this->resolveAccountCodes($lines, $entryData['organization_id'] ?? auth()->user()?->organization_id);
         $this->validateLines($lines);
 
         return DB::transaction(function () use ($entryData, $lines) {
@@ -371,6 +372,36 @@ class JournalService
 
     /**
      * Validate journal entry lines.
+     */
+    protected function resolveAccountCodes(array $lines, ?int $orgId): array
+    {
+        $codes = collect($lines)
+            ->filter(fn($l) => isset($l['account_code']) && !isset($l['account_id']))
+            ->pluck('account_code')
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($codes)) {
+            return $lines;
+        }
+
+        $query = Account::whereIn('code', $codes);
+        if ($orgId) {
+            $query->where('organization_id', $orgId);
+        }
+        $codeMap = $query->pluck('id', 'code');
+
+        return array_map(function (array $line) use ($codeMap): array {
+            if (isset($line['account_code']) && !isset($line['account_id'])) {
+                $line['account_id'] = $codeMap->get($line['account_code']);
+                unset($line['account_code']);
+            }
+            return $line;
+        }, $lines);
+    }
+
+    /**
      */
     protected function validateLines(array $lines): void
     {
