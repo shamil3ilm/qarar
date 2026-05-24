@@ -1,6 +1,6 @@
 # ERP Frontend Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build a Turborepo monorepo at `c:\laragon\www\erp-frontend` with three React + TypeScript apps (staff, admin, portal) and the full ZATCA compliance module as the first feature.
 
@@ -107,7 +107,7 @@ erp-frontend/
 - Create: `c:\laragon\www\erp-frontend\turbo.json`
 - Create: `c:\laragon\www\erp-frontend\.gitignore`
 
-- [ ] **Step 1: Create the root directory and initialize git**
+- [x] **Step 1: Create the root directory and initialize git**
 
 ```bash
 cd c:\laragon\www
@@ -116,7 +116,7 @@ cd erp-frontend
 git init
 ```
 
-- [ ] **Step 2: Create root `package.json`**
+- [x] **Step 2: Create root `package.json`**
 
 ```json
 {
@@ -140,7 +140,7 @@ git init
 }
 ```
 
-- [ ] **Step 3: Create `pnpm-workspace.yaml`**
+- [x] **Step 3: Create `pnpm-workspace.yaml`**
 
 ```yaml
 packages:
@@ -148,7 +148,7 @@ packages:
   - "packages/*"
 ```
 
-- [ ] **Step 4: Create `turbo.json`**
+- [x] **Step 4: Create `turbo.json`**
 
 ```json
 {
@@ -172,7 +172,7 @@ packages:
 }
 ```
 
-- [ ] **Step 5: Create `.gitignore`**
+- [x] **Step 5: Create `.gitignore`**
 
 ```
 node_modules/
@@ -183,7 +183,7 @@ dist/
 .env.*.local
 ```
 
-- [ ] **Step 6: Install Turborepo**
+- [x] **Step 6: Install Turborepo**
 
 ```bash
 pnpm install
@@ -191,7 +191,7 @@ pnpm install
 
 Expected: `node_modules/.pnpm` created at root, `turbo` available.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add .
@@ -207,25 +207,25 @@ git commit -m "chore: initialize Turborepo monorepo"
 - Create: `apps/admin/` (minimal)
 - Create: `apps/portal/` (minimal)
 
-- [ ] **Step 1: Create staff app**
+- [x] **Step 1: Create staff app**
 
 ```bash
 pnpm dlx create-vite apps/staff --template react-ts
 ```
 
-- [ ] **Step 2: Create admin app**
+- [x] **Step 2: Create admin app**
 
 ```bash
 pnpm dlx create-vite apps/admin --template react-ts
 ```
 
-- [ ] **Step 3: Create portal app**
+- [x] **Step 3: Create portal app**
 
 ```bash
 pnpm dlx create-vite apps/portal --template react-ts
 ```
 
-- [ ] **Step 4: Update `apps/staff/package.json` — set name and add scripts**
+- [x] **Step 4: Update `apps/staff/package.json` — set name and add scripts**
 
 Replace the generated `package.json` with:
 
@@ -269,7 +269,7 @@ Replace the generated `package.json` with:
 }
 ```
 
-- [ ] **Step 5: Repeat for `apps/admin/package.json`**
+- [x] **Step 5: Repeat for `apps/admin/package.json`**
 
 ```json
 {
@@ -299,7 +299,7 @@ Replace the generated `package.json` with:
 }
 ```
 
-- [ ] **Step 6: Repeat for `apps/portal/package.json`**
+- [x] **Step 6: Repeat for `apps/portal/package.json`**
 
 ```json
 {
@@ -327,7 +327,7 @@ Replace the generated `package.json` with:
 }
 ```
 
-- [ ] **Step 7: Install all dependencies**
+- [x] **Step 7: Install all dependencies**
 
 ```bash
 pnpm install
@@ -335,7 +335,7 @@ pnpm install
 
 Expected: All three apps get their `node_modules` resolved.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add .
@@ -357,7 +357,7 @@ git commit -m "chore: scaffold three Vite apps (staff, admin, portal)"
 - Create: `packages/ui/tsconfig.json`
 - Create: `packages/ui/src/index.ts`
 
-- [ ] **Step 1: Create `packages/types/package.json`**
+- [x] **Step 1: Create `packages/types/package.json`**
 
 ```json
 {
@@ -375,7 +375,7 @@ git commit -m "chore: scaffold three Vite apps (staff, admin, portal)"
 }
 ```
 
-- [ ] **Step 2: Create `packages/types/tsconfig.json`**
+- [x] **Step 2: Create `packages/types/tsconfig.json`**
 
 ```json
 {
@@ -390,14 +390,14 @@ git commit -m "chore: scaffold three Vite apps (staff, admin, portal)"
 }
 ```
 
-- [ ] **Step 3: Create `packages/types/src/index.ts`** (empty barrel, filled in Task 5)
+- [x] **Step 3: Create `packages/types/src/index.ts`** (empty barrel, filled in Task 5)
 
 ```ts
 export * from './core'
 export * from './zatca'
 ```
 
-- [ ] **Step 4: Create `packages/api-client/package.json`**
+- [x] **Step 4: Create `packages/api-client/package.json`**
 
 ```json
 {
@@ -421,7 +421,7 @@ export * from './zatca'
 }
 ```
 
-- [ ] **Step 5: Create `packages/api-client/tsconfig.json`**
+- [x] **Step 5: Create `packages/api-client/tsconfig.json`**
 
 ```json
 {
@@ -437,7 +437,7 @@ export * from './zatca'
 }
 ```
 
-- [ ] **Step 6: Create `packages/api-client/src/index.ts`** (barrel, filled later)
+- [x] **Step 6: Create `packages/api-client/src/index.ts`** (barrel, filled later)
 
 ```ts
 export * from './axios'
@@ -445,7 +445,7 @@ export * from './query-client'
 export * from './zatca'
 ```
 
-- [ ] **Step 7: Create `packages/ui/package.json`**
+- [x] **Step 7: Create `packages/ui/package.json`**
 
 ```json
 {
@@ -474,7 +474,7 @@ export * from './zatca'
 }
 ```
 
-- [ ] **Step 8: Create `packages/ui/tsconfig.json`**
+- [x] **Step 8: Create `packages/ui/tsconfig.json`**
 
 ```json
 {
@@ -490,7 +490,7 @@ export * from './zatca'
 }
 ```
 
-- [ ] **Step 9: Create `packages/ui/src/index.ts`** (barrel, filled later)
+- [x] **Step 9: Create `packages/ui/src/index.ts`** (barrel, filled later)
 
 ```ts
 export * from './components/AppShell'
@@ -507,7 +507,7 @@ export * from './components/zatca/InvoiceXmlPreview'
 export * from './components/zatca/ComplianceStatsCard'
 ```
 
-- [ ] **Step 10: Install and verify typecheck runs**
+- [x] **Step 10: Install and verify typecheck runs**
 
 ```bash
 pnpm install
@@ -516,7 +516,7 @@ pnpm typecheck
 
 Expected: No errors (files are empty stubs).
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add .
@@ -533,7 +533,7 @@ git commit -m "chore: scaffold shared packages (types, api-client, ui)"
 - Create: `packages/types/src/core.ts`
 - Create: `packages/types/src/zatca.ts`
 
-- [ ] **Step 1: Create `packages/types/src/core.ts`**
+- [x] **Step 1: Create `packages/types/src/core.ts`**
 
 ```ts
 export interface Organization {
@@ -614,7 +614,7 @@ export interface ValidationErrors {
 }
 ```
 
-- [ ] **Step 2: Create `packages/types/src/zatca.ts`**
+- [x] **Step 2: Create `packages/types/src/zatca.ts`**
 
 ```ts
 export type ZatcaOnboardingStatus =
@@ -694,7 +694,7 @@ export interface CreateZatcaInvoicePayload {
 }
 ```
 
-- [ ] **Step 3: Run typecheck**
+- [x] **Step 3: Run typecheck**
 
 ```bash
 pnpm --filter @erp/types typecheck
@@ -702,7 +702,7 @@ pnpm --filter @erp/types typecheck
 
 Expected: No errors.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/types/
@@ -719,7 +719,7 @@ git commit -m "feat(types): add core and ZATCA TypeScript interfaces"
 - Create: `packages/api-client/src/axios.ts`
 - Create: `packages/api-client/src/query-client.ts`
 
-- [ ] **Step 1: Write failing test for axios instance**
+- [x] **Step 1: Write failing test for axios instance**
 
 Create `packages/api-client/src/axios.test.ts`:
 
@@ -750,7 +750,7 @@ describe('createApiClient', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 pnpm --filter @erp/api-client test
@@ -758,7 +758,7 @@ pnpm --filter @erp/api-client test
 
 Expected: FAIL — `createApiClient` not found.
 
-- [ ] **Step 3: Create `packages/api-client/src/axios.ts`**
+- [x] **Step 3: Create `packages/api-client/src/axios.ts`**
 
 ```ts
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'axios'
@@ -866,7 +866,7 @@ export function getApiClient(): AxiosInstance {
 }
 ```
 
-- [ ] **Step 4: Create `packages/api-client/src/query-client.ts`**
+- [x] **Step 4: Create `packages/api-client/src/query-client.ts`**
 
 ```ts
 import { QueryClient } from '@tanstack/react-query'
@@ -885,7 +885,7 @@ export function createQueryClient(): QueryClient {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 ```bash
 pnpm --filter @erp/api-client test
@@ -893,7 +893,7 @@ pnpm --filter @erp/api-client test
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/api-client/src/axios.ts packages/api-client/src/query-client.ts packages/api-client/src/axios.test.ts
@@ -908,7 +908,7 @@ git commit -m "feat(api-client): add Axios instance with JWT interceptors and Qu
 - Create: `packages/api-client/src/zatca.ts`
 - Create: `packages/api-client/src/mocks/zatca.ts`
 
-- [ ] **Step 1: Create `packages/api-client/src/zatca.ts`**
+- [x] **Step 1: Create `packages/api-client/src/zatca.ts`**
 
 ```ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -1062,7 +1062,7 @@ export function useComplianceReport(dateRange: { start: string; end: string }) {
 }
 ```
 
-- [ ] **Step 2: Create MSW mock handlers `packages/api-client/src/mocks/zatca.ts`**
+- [x] **Step 2: Create MSW mock handlers `packages/api-client/src/mocks/zatca.ts`**
 
 ```ts
 import { http, HttpResponse } from 'msw'
@@ -1151,7 +1151,7 @@ export const zatcaMockHandlers = [
 ]
 ```
 
-- [ ] **Step 3: Create `packages/api-client/src/mocks/index.ts`**
+- [x] **Step 3: Create `packages/api-client/src/mocks/index.ts`**
 
 ```ts
 export { zatcaMockHandlers } from './zatca'
@@ -1159,7 +1159,7 @@ export { zatcaMockHandlers } from './zatca'
 export const allMockHandlers = [...zatcaMockHandlers]
 ```
 
-- [ ] **Step 4: Typecheck**
+- [x] **Step 4: Typecheck**
 
 ```bash
 pnpm --filter @erp/api-client typecheck
@@ -1167,7 +1167,7 @@ pnpm --filter @erp/api-client typecheck
 
 Expected: No errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/api-client/
@@ -1184,7 +1184,7 @@ git commit -m "feat(api-client): add ZATCA TanStack Query hooks and MSW mock han
 - Create: `apps/staff/src/store/auth.ts`
 - Create: `apps/staff/src/store/auth.test.ts`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Create `apps/staff/src/store/auth.test.ts`:
 
@@ -1232,7 +1232,7 @@ describe('useAuthStore', () => {
 })
 ```
 
-- [ ] **Step 2: Run test — verify it fails**
+- [x] **Step 2: Run test — verify it fails**
 
 ```bash
 pnpm --filter @erp/staff test
@@ -1240,7 +1240,7 @@ pnpm --filter @erp/staff test
 
 Expected: FAIL — `useAuthStore` not found.
 
-- [ ] **Step 3: Create `apps/staff/src/store/auth.ts`**
+- [x] **Step 3: Create `apps/staff/src/store/auth.ts`**
 
 ```ts
 import { create } from 'zustand'
@@ -1287,7 +1287,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 }))
 ```
 
-- [ ] **Step 4: Configure Vitest in staff app**
+- [x] **Step 4: Configure Vitest in staff app**
 
 Update `apps/staff/vite.config.ts`:
 
@@ -1311,7 +1311,7 @@ Create `apps/staff/src/test/setup.ts`:
 import '@testing-library/jest-dom'
 ```
 
-- [ ] **Step 5: Run tests — verify they pass**
+- [x] **Step 5: Run tests — verify they pass**
 
 ```bash
 pnpm --filter @erp/staff test
@@ -1319,7 +1319,7 @@ pnpm --filter @erp/staff test
 
 Expected: 3 tests PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/staff/src/store/ apps/staff/vite.config.ts apps/staff/src/test/
@@ -1337,13 +1337,13 @@ git commit -m "feat(staff): add Zustand auth store with tests"
 - Create: `packages/ui/src/components/LoadingSpinner.tsx`
 - Create: `packages/ui/src/components/EmptyState.tsx`
 
-- [ ] **Step 1: Install shadcn/ui dependencies in packages/ui**
+- [x] **Step 1: Install shadcn/ui dependencies in packages/ui**
 
 ```bash
 pnpm --filter @erp/ui add clsx tailwind-merge class-variance-authority lucide-react
 ```
 
-- [ ] **Step 2: Create utility `packages/ui/src/lib/utils.ts`**
+- [x] **Step 2: Create utility `packages/ui/src/lib/utils.ts`**
 
 ```ts
 import { clsx, type ClassValue } from 'clsx'
@@ -1354,7 +1354,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 ```
 
-- [ ] **Step 3: Create `packages/ui/src/components/LoadingSpinner.tsx`**
+- [x] **Step 3: Create `packages/ui/src/components/LoadingSpinner.tsx`**
 
 ```tsx
 import { cn } from '../lib/utils'
@@ -1377,7 +1377,7 @@ export function LoadingSpinner({ className, size = 'md' }: LoadingSpinnerProps) 
 }
 ```
 
-- [ ] **Step 4: Write test for LoadingSpinner**
+- [x] **Step 4: Write test for LoadingSpinner**
 
 Create `packages/ui/src/components/LoadingSpinner.test.tsx`:
 
@@ -1400,7 +1400,7 @@ describe('LoadingSpinner', () => {
 })
 ```
 
-- [ ] **Step 5: Create `packages/ui/src/components/EmptyState.tsx`**
+- [x] **Step 5: Create `packages/ui/src/components/EmptyState.tsx`**
 
 ```tsx
 import { cn } from '../lib/utils'
@@ -1428,7 +1428,7 @@ export function EmptyState({ title, description, action, className }: EmptyState
 }
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/ui/
@@ -1443,7 +1443,7 @@ git commit -m "feat(ui): add shadcn utils, LoadingSpinner, EmptyState with tests
 - Create: `packages/ui/src/components/zatca/ZatcaStatusBadge.tsx`
 - Create: `packages/ui/src/components/zatca/ZatcaStatusBadge.test.tsx`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Create `packages/ui/src/components/zatca/ZatcaStatusBadge.test.tsx`:
 
@@ -1476,7 +1476,7 @@ describe('ZatcaStatusBadge', () => {
 })
 ```
 
-- [ ] **Step 2: Run test — verify it fails**
+- [x] **Step 2: Run test — verify it fails**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -1484,7 +1484,7 @@ pnpm --filter @erp/ui test
 
 Expected: FAIL — component not found.
 
-- [ ] **Step 3: Create `packages/ui/src/components/zatca/ZatcaStatusBadge.tsx`**
+- [x] **Step 3: Create `packages/ui/src/components/zatca/ZatcaStatusBadge.tsx`**
 
 ```tsx
 import { cn } from '../../lib/utils'
@@ -1512,7 +1512,7 @@ export function ZatcaStatusBadge({ status, className }: ZatcaStatusBadgeProps) {
 }
 ```
 
-- [ ] **Step 4: Run tests — verify they pass**
+- [x] **Step 4: Run tests — verify they pass**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -1520,7 +1520,7 @@ pnpm --filter @erp/ui test
 
 Expected: 4 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ui/src/components/zatca/
@@ -1542,7 +1542,7 @@ git commit -m "feat(ui): add ZatcaStatusBadge component with tests"
 - Create: `packages/ui/src/components/ConfirmDialog.tsx`
 - Create: `packages/ui/src/components/ErrorBoundary.tsx`
 
-- [ ] **Step 1: Create `packages/ui/src/components/AppShell.tsx`**
+- [x] **Step 1: Create `packages/ui/src/components/AppShell.tsx`**
 
 ```tsx
 import { useState } from 'react'
@@ -1579,7 +1579,7 @@ export function AppShell({ sidebar, topbar, children }: AppShellProps) {
 }
 ```
 
-- [ ] **Step 2: Create `packages/ui/src/components/Sidebar.tsx`**
+- [x] **Step 2: Create `packages/ui/src/components/Sidebar.tsx`**
 
 ```tsx
 import { cn } from '../lib/utils'
@@ -1628,7 +1628,7 @@ export function Sidebar({ items, permissions, currentPath, collapsed = false }: 
 }
 ```
 
-- [ ] **Step 3: Write test for Sidebar permission gating**
+- [x] **Step 3: Write test for Sidebar permission gating**
 
 Create `packages/ui/src/components/Sidebar.test.tsx`:
 
@@ -1664,7 +1664,7 @@ describe('Sidebar', () => {
 })
 ```
 
-- [ ] **Step 4: Run test — verify it passes**
+- [x] **Step 4: Run test — verify it passes**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -1672,7 +1672,7 @@ pnpm --filter @erp/ui test
 
 Expected: Sidebar tests PASS.
 
-- [ ] **Step 5: Create `packages/ui/src/components/TopBar.tsx`**
+- [x] **Step 5: Create `packages/ui/src/components/TopBar.tsx`**
 
 ```tsx
 interface TopBarProps {
@@ -1729,7 +1729,7 @@ export function TopBar({
 }
 ```
 
-- [ ] **Step 6: Create `packages/ui/src/components/PageHeader.tsx`**
+- [x] **Step 6: Create `packages/ui/src/components/PageHeader.tsx`**
 
 ```tsx
 interface PageHeaderProps {
@@ -1760,7 +1760,7 @@ export function PageHeader({ title, breadcrumbs, actions }: PageHeaderProps) {
 }
 ```
 
-- [ ] **Step 7: Create `packages/ui/src/components/DataCard.tsx`**
+- [x] **Step 7: Create `packages/ui/src/components/DataCard.tsx`**
 
 ```tsx
 import { cn } from '../lib/utils'
@@ -1789,7 +1789,7 @@ export function DataCard({ title, value, subtitle, trend, className }: DataCardP
 }
 ```
 
-- [ ] **Step 8: Create `packages/ui/src/components/ConfirmDialog.tsx`**
+- [x] **Step 8: Create `packages/ui/src/components/ConfirmDialog.tsx`**
 
 ```tsx
 interface ConfirmDialogProps {
@@ -1836,7 +1836,7 @@ export function ConfirmDialog({
 }
 ```
 
-- [ ] **Step 9: Create `packages/ui/src/components/ErrorBoundary.tsx`**
+- [x] **Step 9: Create `packages/ui/src/components/ErrorBoundary.tsx`**
 
 ```tsx
 import { Component, ErrorInfo, ReactNode } from 'react'
@@ -1873,7 +1873,7 @@ export class ErrorBoundary extends Component<Props, State> {
 }
 ```
 
-- [ ] **Step 10: Run tests**
+- [x] **Step 10: Run tests**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -1881,7 +1881,7 @@ pnpm --filter @erp/ui test
 
 Expected: All tests PASS including new Sidebar tests.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add packages/ui/src/components/
@@ -1899,7 +1899,7 @@ git commit -m "feat(ui): add AppShell, Sidebar, TopBar, PageHeader, DataCard, Co
 - Create: `apps/staff/src/routes/login.tsx`
 - Create: `apps/staff/src/routes/app/route.tsx`
 
-- [ ] **Step 1: Create `apps/staff/src/router.tsx`**
+- [x] **Step 1: Create `apps/staff/src/router.tsx`**
 
 ```tsx
 import { createRouter } from '@tanstack/react-router'
@@ -1914,7 +1914,7 @@ declare module '@tanstack/react-router' {
 }
 ```
 
-- [ ] **Step 2: Create `apps/staff/src/routes/__root.tsx`**
+- [x] **Step 2: Create `apps/staff/src/routes/__root.tsx`**
 
 ```tsx
 import { createRootRoute, Outlet } from '@tanstack/react-router'
@@ -1932,7 +1932,7 @@ export const Route = createRootRoute({
 })
 ```
 
-- [ ] **Step 3: Create `apps/staff/src/routes/login.tsx`**
+- [x] **Step 3: Create `apps/staff/src/routes/login.tsx`**
 
 ```tsx
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -2018,7 +2018,7 @@ function LoginPage() {
 }
 ```
 
-- [ ] **Step 4: Create protected route `apps/staff/src/routes/app/route.tsx`**
+- [x] **Step 4: Create protected route `apps/staff/src/routes/app/route.tsx`**
 
 ```tsx
 import { createFileRoute, redirect } from '@tanstack/react-router'
@@ -2032,7 +2032,7 @@ export const Route = createFileRoute('/app')({
 })
 ```
 
-- [ ] **Step 5: Update `apps/staff/src/main.tsx`**
+- [x] **Step 5: Update `apps/staff/src/main.tsx`**
 
 ```tsx
 import React from 'react'
@@ -2061,7 +2061,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 )
 ```
 
-- [ ] **Step 6: Verify dev server starts**
+- [x] **Step 6: Verify dev server starts**
 
 ```bash
 pnpm --filter @erp/staff dev
@@ -2069,7 +2069,7 @@ pnpm --filter @erp/staff dev
 
 Expected: Staff app runs at http://localhost:5173, login page visible.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/staff/src/
@@ -2086,7 +2086,7 @@ git commit -m "feat(staff): wire router, auth guard, login page, Axios init"
 - Create: `packages/ui/src/components/zatca/ZatcaOnboardingWizard.tsx`
 - Create: `packages/ui/src/components/zatca/ZatcaOnboardingWizard.test.tsx`
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Create `packages/ui/src/components/zatca/ZatcaOnboardingWizard.test.tsx`:
 
@@ -2129,7 +2129,7 @@ describe('ZatcaOnboardingWizard', () => {
 })
 ```
 
-- [ ] **Step 2: Run test — verify it fails**
+- [x] **Step 2: Run test — verify it fails**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -2137,7 +2137,7 @@ pnpm --filter @erp/ui test
 
 Expected: FAIL.
 
-- [ ] **Step 3: Create `packages/ui/src/components/zatca/ZatcaOnboardingWizard.tsx`**
+- [x] **Step 3: Create `packages/ui/src/components/zatca/ZatcaOnboardingWizard.tsx`**
 
 ```tsx
 import { cn } from '../../lib/utils'
@@ -2244,7 +2244,7 @@ export function ZatcaOnboardingWizard({
 }
 ```
 
-- [ ] **Step 4: Run tests — verify they pass**
+- [x] **Step 4: Run tests — verify they pass**
 
 ```bash
 pnpm --filter @erp/ui test
@@ -2252,7 +2252,7 @@ pnpm --filter @erp/ui test
 
 Expected: All tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/ui/src/components/zatca/ZatcaOnboardingWizard.tsx packages/ui/src/components/zatca/ZatcaOnboardingWizard.test.tsx
@@ -2266,7 +2266,7 @@ git commit -m "feat(ui): add ZatcaOnboardingWizard component with tests"
 **Files:**
 - Create: `apps/staff/src/routes/app/compliance/zatca/onboarding/index.tsx`
 
-- [ ] **Step 1: Create the onboarding index page**
+- [x] **Step 1: Create the onboarding index page**
 
 ```tsx
 import { createFileRoute } from '@tanstack/react-router'
@@ -2308,7 +2308,7 @@ function OnboardingPage() {
 }
 ```
 
-- [ ] **Step 2: Verify page renders in dev server**
+- [x] **Step 2: Verify page renders in dev server**
 
 ```bash
 pnpm --filter @erp/staff dev
@@ -2316,7 +2316,7 @@ pnpm --filter @erp/staff dev
 
 Navigate to http://localhost:5173/app/compliance/zatca/onboarding — should show wizard.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apps/staff/src/routes/app/compliance/
@@ -2330,13 +2330,13 @@ git commit -m "feat(staff): add ZATCA onboarding page"
 **Files:**
 - Create: `apps/staff/src/routes/app/compliance/zatca/invoices/index.tsx`
 
-- [ ] **Step 1: Install AG Grid in staff app**
+- [x] **Step 1: Install AG Grid in staff app**
 
 ```bash
 pnpm --filter @erp/staff add ag-grid-react ag-grid-community
 ```
 
-- [ ] **Step 2: Create invoice list page**
+- [x] **Step 2: Create invoice list page**
 
 Create `apps/staff/src/routes/app/compliance/zatca/invoices/index.tsx`:
 
@@ -2455,7 +2455,7 @@ function ZatcaInvoicesPage() {
 }
 ```
 
-- [ ] **Step 3: Verify page renders**
+- [x] **Step 3: Verify page renders**
 
 ```bash
 pnpm --filter @erp/staff dev
@@ -2463,7 +2463,7 @@ pnpm --filter @erp/staff dev
 
 Navigate to http://localhost:5173/app/compliance/zatca/invoices — grid should appear.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/staff/src/routes/app/compliance/zatca/invoices/
@@ -2477,13 +2477,13 @@ git commit -m "feat(staff): add ZATCA invoice list with AG Grid"
 **Files:**
 - Create: `apps/staff/src/routes/app/compliance/zatca/invoices/create.tsx`
 
-- [ ] **Step 1: Install React Hook Form + Zod in staff app (if not already)**
+- [x] **Step 1: Install React Hook Form + Zod in staff app (if not already)**
 
 ```bash
 pnpm --filter @erp/staff add react-hook-form zod @hookform/resolvers
 ```
 
-- [ ] **Step 2: Create invoice create page**
+- [x] **Step 2: Create invoice create page**
 
 Create `apps/staff/src/routes/app/compliance/zatca/invoices/create.tsx`:
 
@@ -2638,11 +2638,11 @@ function CreateInvoicePage() {
 }
 ```
 
-- [ ] **Step 3: Verify in dev server**
+- [x] **Step 3: Verify in dev server**
 
 Navigate to http://localhost:5173/app/compliance/zatca/invoices/create — form should render with line items.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/staff/src/routes/app/compliance/zatca/invoices/create.tsx
@@ -2657,7 +2657,7 @@ git commit -m "feat(staff): add ZATCA invoice create form with Zod validation"
 - Create: `packages/ui/src/components/zatca/ComplianceStatsCard.tsx`
 - Create: `apps/staff/src/routes/app/compliance/zatca/reports/index.tsx`
 
-- [ ] **Step 1: Create `packages/ui/src/components/zatca/ComplianceStatsCard.tsx`**
+- [x] **Step 1: Create `packages/ui/src/components/zatca/ComplianceStatsCard.tsx`**
 
 ```tsx
 import { cn } from '../../lib/utils'
@@ -2694,7 +2694,7 @@ export function ComplianceStatsCard({
 }
 ```
 
-- [ ] **Step 2: Create compliance reports page**
+- [x] **Step 2: Create compliance reports page**
 
 Create `apps/staff/src/routes/app/compliance/zatca/reports/index.tsx`:
 
@@ -2770,11 +2770,11 @@ function ZatcaReportsPage() {
 }
 ```
 
-- [ ] **Step 3: Verify in dev server**
+- [x] **Step 3: Verify in dev server**
 
 Navigate to http://localhost:5173/app/compliance/zatca/reports — stats cards should appear.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add packages/ui/src/components/zatca/ComplianceStatsCard.tsx apps/staff/src/routes/app/compliance/zatca/reports/
@@ -2791,14 +2791,14 @@ git commit -m "feat(staff): add ZATCA compliance reports page with stats cards"
 - Create: `apps/staff/e2e/zatca.spec.ts`
 - Create: `apps/staff/playwright.config.ts`
 
-- [ ] **Step 1: Install Playwright**
+- [x] **Step 1: Install Playwright**
 
 ```bash
 pnpm --filter @erp/staff add -D @playwright/test
 pnpm --filter @erp/staff exec playwright install chromium
 ```
 
-- [ ] **Step 2: Create `apps/staff/playwright.config.ts`**
+- [x] **Step 2: Create `apps/staff/playwright.config.ts`**
 
 ```ts
 import { defineConfig } from '@playwright/test'
@@ -2817,7 +2817,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3: Create `apps/staff/e2e/zatca.spec.ts`**
+- [x] **Step 3: Create `apps/staff/e2e/zatca.spec.ts`**
 
 ```ts
 import { test, expect } from '@playwright/test'
@@ -2859,7 +2859,7 @@ test.describe('ZATCA module', () => {
 })
 ```
 
-- [ ] **Step 4: Run E2E tests (with dev server running)**
+- [x] **Step 4: Run E2E tests (with dev server running)**
 
 ```bash
 pnpm --filter @erp/staff dev &
@@ -2868,7 +2868,7 @@ pnpm --filter @erp/staff exec playwright test
 
 Expected: 4 tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/staff/e2e/ apps/staff/playwright.config.ts
@@ -2889,7 +2889,7 @@ git commit -m "test(staff): add Playwright E2E tests for ZATCA module"
 
 The logo SVG source is at `docs/superpowers/assets/logo.svg` in the backend repo.
 
-- [ ] **Step 1: Copy logo to all three app public directories**
+- [x] **Step 1: Copy logo to all three app public directories**
 
 Create `apps/staff/public/logo.svg`, `apps/admin/public/logo.svg`, `apps/portal/public/logo.svg` — all with the same content:
 
@@ -2902,7 +2902,7 @@ Create `apps/staff/public/logo.svg`, `apps/admin/public/logo.svg`, `apps/portal/
 </svg>
 ```
 
-- [ ] **Step 2: Create `packages/ui/src/components/Logo.tsx`**
+- [x] **Step 2: Create `packages/ui/src/components/Logo.tsx`**
 
 ```tsx
 interface LogoProps {
@@ -2923,7 +2923,7 @@ export function Logo({ size = 32, className }: LogoProps) {
 }
 ```
 
-- [ ] **Step 3: Update `TopBar` to use Logo instead of text**
+- [x] **Step 3: Update `TopBar` to use Logo instead of text**
 
 In `packages/ui/src/components/TopBar.tsx`, replace:
 
@@ -2943,7 +2943,7 @@ And add the import at the top:
 import { Logo } from './Logo'
 ```
 
-- [ ] **Step 4: Update login page to show logo**
+- [x] **Step 4: Update login page to show logo**
 
 In `apps/staff/src/routes/login.tsx`, replace:
 
@@ -2960,11 +2960,11 @@ with:
 </div>
 ```
 
-- [ ] **Step 5: Update vendor portal header to use logo**
+- [x] **Step 5: Update vendor portal header to use logo**
 
 The portal `AppShell` equivalent header should display the logo prominently. In `apps/portal/src/main.tsx` (or the portal layout when built), the logo is referenced at `/logo.svg` from `apps/portal/public/`.
 
-- [ ] **Step 6: Export Logo from packages/ui**
+- [x] **Step 6: Export Logo from packages/ui**
 
 Add to `packages/ui/src/index.ts`:
 
@@ -2972,7 +2972,7 @@ Add to `packages/ui/src/index.ts`:
 export * from './components/Logo'
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/staff/public/logo.svg apps/admin/public/logo.svg apps/portal/public/logo.svg packages/ui/src/components/Logo.tsx
@@ -2988,7 +2988,7 @@ git commit -m "feat(ui): add logo asset and Logo component, wire into TopBar and
 - Create: `apps/admin/.env.local`
 - Create: `apps/portal/.env.local`
 
-- [ ] **Step 1: Create env files**
+- [x] **Step 1: Create env files**
 
 `apps/staff/.env.local`:
 ```
@@ -3008,7 +3008,7 @@ VITE_API_URL=http://localhost:8000/api/v1
 VITE_APP_NAME=ERP Portal
 ```
 
-- [ ] **Step 2: Add `.env.local` to `.gitignore`**
+- [x] **Step 2: Add `.env.local` to `.gitignore`**
 
 Append to root `.gitignore`:
 ```
@@ -3016,7 +3016,7 @@ Append to root `.gitignore`:
 .env.*.local
 ```
 
-- [ ] **Step 3: Run full typecheck**
+- [x] **Step 3: Run full typecheck**
 
 ```bash
 pnpm typecheck
@@ -3024,7 +3024,7 @@ pnpm typecheck
 
 Expected: No errors across all packages and apps.
 
-- [ ] **Step 4: Run full test suite**
+- [x] **Step 4: Run full test suite**
 
 ```bash
 pnpm test
@@ -3032,7 +3032,7 @@ pnpm test
 
 Expected: All Vitest tests pass.
 
-- [ ] **Step 5: Run full build**
+- [x] **Step 5: Run full build**
 
 ```bash
 pnpm build
@@ -3040,7 +3040,7 @@ pnpm build
 
 Expected: `apps/staff/dist/`, `apps/admin/dist/`, `apps/portal/dist/` created.
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 ```bash
 git add .
